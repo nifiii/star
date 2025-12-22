@@ -23,14 +23,18 @@ server {
     }
 
     # 3. 每日榜单数据：daily_rankings.json 缓存 1 小时
-    # 前端请求带有小时级时间戳 (?t=HH)，Nginx 配合 max-age=3600
-    # 这样在一小时内，浏览器会直接读取本地缓存，无需请求服务器
     location = /daily_rankings.json {
         add_header Cache-Control "public, max-age=3600";
         expires 1h;
     }
 
-    # 4. 静态资源缓存配置 (js, css, images)
+    # 4. 每日比分数据：daily_matches.json 缓存 1 小时
+    location = /daily_matches.json {
+        add_header Cache-Control "public, max-age=3600";
+        expires 1h;
+    }
+
+    # 5. 静态资源缓存配置 (js, css, images)
     # Vite 生成的文件带有 hash 文件名，可以长时间缓存
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
         expires 1y;

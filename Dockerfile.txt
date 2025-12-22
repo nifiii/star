@@ -36,7 +36,10 @@ RUN rm -rf /var/www/html/* && cp -r dist/* /var/www/html/
 COPY nginx.conf.txt /etc/nginx/conf.d/default.conf
 
 # 6. 路径映射
-# 脚本 scripts/getToken.js 会写入到 "../public/auth_config.json" 和 "../public/daily_rankings.json"
+# 脚本 scripts/getToken.js 会写入到:
+#   - "../public/auth_config.json" (鉴权信息)
+#   - "../public/daily_rankings.json" (榜单缓存)
+#   - "../public/daily_matches.json" (比分缓存)
 # 我们将 /app/public 软链接到 Nginx 的 Web 根目录，以便前端可以访问这些生成的 JSON 文件
 RUN rm -rf /app/public && ln -s /var/www/html /app/public
 

@@ -9,12 +9,12 @@
 ## ✨ 核心亮点
 
 ### 🚀 极速体验 (Performance)
-*   **零延迟查询**: 采用 **Server-Side Incremental Scraper (服务端增量爬虫)** 技术。后台脚本每天凌晨 5 点（北京时间）自动抓取并增量更新赛事数据。
-*   **智能缓存**: 前端优先读取静态化的 JSON 数据源，结合浏览器缓存机制，实现“秒开”体验，极大减少等待时间。
+*   **双重增量引擎**: 采用 **Server-Side Incremental Scraper** 技术。后台脚本智能分离“赛事排名”与“比赛比分”的抓取逻辑，确保数据完整性。
+*   **静态化持久存储**: 自动生成 `daily_rankings.json` (榜单) 和 `daily_matches.json` (比分库)。前端优先读取这些静态资源，配合 Nginx 缓存，实现秒级加载，大幅降低 API 依赖。
 
 ### 🧠 功能特性
 *   **🏆 积分排行榜**: 聚合计算指定城市、年龄段（如 U8、U9）的所有近期赛事积分。
-*   **👤 选手生涯档案**: 全网搜索选手的参赛历史，生成胜率曲线和对手分析。
+*   **👤 选手生涯档案**: 全网搜索选手的参赛历史，生成胜率曲线和对手分析。支持从本地比分库快速回溯。
 *   **🤖 AI 教练**: 
     *   **赛区观察**: 分析赛区竞争格局，发现潜力新星。
     *   **战术报告**: 针对个人历史战绩，评估稳定性并给出训练建议。
@@ -24,6 +24,11 @@
 
 *   **前端**: React 19, Vite, Tailwind CSS
 *   **后端**: Node.js (无需 Puppeteer，纯 API 调用), `node-cron` 调度逻辑
+*   **数据流**: 
+    1.  每日凌晨 5 点（或容器启动时）自动运行增量检查。
+    2.  比对本地 JSON 数据库，精准抓取缺失的排名或比分数据。
+    3.  数据持久化为静态 JSON 文件。
+    4.  Nginx 提供静态文件服务及 Gzip 压缩。
 *   **AI**: Google Gemini API (`@google/genai`)
 *   **部署**: Docker (Nginx + Node.js 混合镜像)
 
@@ -52,7 +57,7 @@ cd huatihui-data-insight
 docker build \
   --build-arg API_KEY="your_gemini_api_key_here" \
   -t hth-dashboard \
-  -f Dockerfile.gemini.txt .
+  -f Dockerfile.txt .
 ```
 
 ### 4. 运行容器
@@ -90,7 +95,7 @@ docker exec -it my-hth-dashboard npm run get-token
 ## 💻 本地开发
 
 1.  **安装依赖**: `npm install`
-2.  **获取 Token**: 运行 `npm run get-token` (这会启动后台脚本，你可以按 Ctrl+C 停止，或让它在后台运行)。
+2.  **获取 Token**: 运行 `npm run get-token` (这会启动后台脚本，执行增量更新并生成 JSON 文件)。
 3.  **启动前端**: `npm run dev`
 
 ## 📄 License

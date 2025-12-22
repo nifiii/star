@@ -6,7 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, '../public');
 const authPath = path.resolve(publicDir, 'auth_config.json');
-const dataPath = path.resolve(publicDir, 'daily_rankings.json');
+const rankingsPath = path.resolve(publicDir, 'daily_rankings.json');
+const matchesPath = path.resolve(publicDir, 'daily_matches.json');
 
 // 用户配置
 const CREDENTIALS = {
@@ -182,9 +183,86 @@ async function fetchRankingsForGame(game) {
             await wait(150);
         }
     } catch (e) {
-        console.warn(`Error scanning game ${game.id}: ${e.message}`);
+        console.warn(`Error scanning rankings for game ${game.id}: ${e.message}`);
     }
     return allRanks;
+}
+
+// New: Fetch Matches with Pagination
+async function fetchMatchesForGame(game) {
+    const allMatches = [];
+    let page = 1;
+    const pageSize = 50; // Use larger page size to reduce requests
+    let hasMore = true;
+
+    try {
+        while (hasMore) {
+            const url = `https://race.ymq.me/webservice/appWxMatch/matchesScore.do?t=${Date.now()}`;
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
+                body: JSON.stringify({
+                    body: {
+                        raceId: game.id,
+                        page: page,
+                        rows: pageSize,
+                        keyword: "" // Fetch ALL matches
+                    },
+                    header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" }
+                })
+            });
+            
+            if (!res.ok) break;
+            const json = await res.json();
+            const rows = json?.detail?.rows || [];
+            
+            if (rows.length === 0) {
+                hasMore = false;
+                break;
+            }
+
+            // Map and minimize data to save disk space
+            rows.forEach(m => {
+                let p1 = m.mateOne;
+                if (!p1 && Array.isArray(m.playerOnes) && m.playerOnes.length > 0) p1 = m.playerOnes[0].name;
+                
+                let p2 = m.mateTwo;
+                if (!p2 && Array.isArray(m.playerTwos) && m.playerTwos.length > 0) p2 = m.playerTwos[0].name;
+
+                let finalScore = "0:0";
+                if (typeof m.scoreOne === 'number' && typeof m.scoreTwo === 'number') {
+                    finalScore = `${m.scoreOne}:${m.scoreTwo}`;
+                } else if (m.score) {
+                    finalScore = m.score;
+                }
+
+                allMatches.push({
+                    raceId: game.id,
+                    game_name: game.game_name,
+                    matchId: m.id,
+                    groupName: m.fullName || m.groupName,
+                    playerA: p1 || '未知选手A',
+                    playerB: p2 || '未知选手B',
+                    score: finalScore,
+                    matchTime: m.raceTimeName,
+                    round: m.roundName || m.rulesName
+                });
+            });
+
+            // Check if we reached the end
+            if (rows.length < pageSize || (json.detail.total && allMatches.length >= json.detail.total)) {
+                hasMore = false;
+            } else {
+                page++;
+                await wait(200); // 200ms delay between pages
+            }
+        }
+    } catch (e) {
+        console.warn(`Error scanning matches for game ${game.id}: ${e.message}`);
+    }
+    
+    console.log(`    > 🏟️ ${game.game_name}: 获取到 ${allMatches.length} 场比赛比分`);
+    return allMatches;
 }
 
 async function runDailyUpdate() {
@@ -201,91 +279,136 @@ async function runDailyUpdate() {
         return;
     }
 
-    // 3. --- INCREMENTAL LOGIC ---
-    let existingData = [];
-    let existingGameIds = new Set();
+    // 3. --- LOAD EXISTING DATA ---
+    let existingRankData = [];
+    let existingMatchData = [];
     
-    if (fs.existsSync(dataPath)) {
+    // Load Rankings
+    if (fs.existsSync(rankingsPath)) {
         try {
-            const fileContent = fs.readFileSync(dataPath, 'utf-8');
-            const parsed = JSON.parse(fileContent);
+            const rContent = fs.readFileSync(rankingsPath, 'utf-8');
+            const parsed = JSON.parse(rContent);
             if (parsed && Array.isArray(parsed.data)) {
-                existingData = parsed.data;
-                // Create a Set of existing RaceIDs
-                existingData.forEach(r => existingGameIds.add(r.raceId));
-                console.log(`📦 已加载本地缓存: 包含 ${existingGameIds.size} 场赛事的 ${existingData.length} 条记录。`);
+                existingRankData = parsed.data;
             }
-        } catch (e) {
-            console.error("读取现有缓存失败，将重新抓取全量数据:", e.message);
+        } catch (e) { console.error("Error reading rankings cache:", e.message); }
+    }
+    
+    // Load Matches
+    if (fs.existsSync(matchesPath)) {
+         try {
+            const mContent = fs.readFileSync(matchesPath, 'utf-8');
+            const parsed = JSON.parse(mContent);
+            if (parsed && Array.isArray(parsed.data)) {
+                existingMatchData = parsed.data;
+            }
+        } catch (e) { console.error("Error reading matches cache:", e.message); }
+    }
+
+    // 4. --- INCREMENTAL CHECK LOGIC ---
+    // Decouple checks: We might have rankings but lack matches for the same game
+    const rankedGameIds = new Set(existingRankData.map(r => r.raceId));
+    const matchedGameIds = new Set(existingMatchData.map(m => m.raceId));
+
+    console.log(`📦 本地缓存状态:`);
+    console.log(`   - 排名已收录: ${rankedGameIds.size} 场赛事`);
+    console.log(`   - 比分已收录: ${matchedGameIds.size} 场赛事`);
+
+    let newRankings = [];
+    let newMatches = [];
+    let updatesMade = false;
+
+    console.log(`🚀 开始对比并增量抓取...`);
+
+    for (let i = 0; i < allGames.length; i++) {
+        const game = allGames[i];
+        const hasRank = rankedGameIds.has(game.id);
+        const hasMatch = matchedGameIds.has(game.id);
+
+        if (hasRank && hasMatch) {
+            // Data is complete for this game
+            continue;
+        }
+
+        console.log(`[${i+1}/${allGames.length}] 检查: ${game.game_name}`);
+
+        // A. Fetch Rankings if missing
+        if (!hasRank) {
+            console.log(`    --> ⚠️ 缺失排名数据，正在抓取...`);
+            const ranks = await fetchRankingsForGame(game);
+            if (ranks.length > 0) {
+                newRankings = newRankings.concat(ranks);
+                updatesMade = true;
+            }
+            await wait(1000); 
+        }
+
+        // B. Fetch Matches if missing
+        if (!hasMatch) {
+            console.log(`    --> ⚠️ 缺失比分数据，正在抓取...`);
+            const matches = await fetchMatchesForGame(game);
+            if (matches.length > 0) {
+                newMatches = newMatches.concat(matches);
+                updatesMade = true;
+            }
+            await wait(1000);
         }
     }
 
-    // Identify NEW games that are NOT in existingData
-    const gamesToFetch = allGames.filter(g => !existingGameIds.has(g.id));
-
-    if (gamesToFetch.length === 0) {
-        console.log("✅ 没有发现新的已结束赛事。缓存已是最新状态。");
-        // Update timestamp even if data hasn't changed
-        const cachePayload = {
-            updatedAt: Date.now(),
-            dateString: new Date().toLocaleString(),
-            count: existingData.length,
-            city: "广州市",
-            data: existingData
-        };
-        fs.writeFileSync(dataPath, JSON.stringify(cachePayload));
+    if (!updatesMade) {
+        console.log("✅ 所有近期赛事的排名和比分均为最新，无需更新。");
+        // Update timestamp on files to indicate system is alive
+        const now = Date.now();
+        const dateStr = new Date().toLocaleString();
+        
+        fs.writeFileSync(rankingsPath, JSON.stringify({ updatedAt: now, dateString: dateStr, count: existingRankData.length, city: "广州市", data: existingRankData }));
+        fs.writeFileSync(matchesPath, JSON.stringify({ updatedAt: now, dateString: dateStr, count: existingMatchData.length, city: "广州市", data: existingMatchData }));
         return;
     }
 
-    console.log(`🚀 发现 ${gamesToFetch.length} 场新赛事，开始增量抓取...`);
-
-    // 4. Fetch ONLY new games
-    let newRankings = [];
-    for (let i = 0; i < gamesToFetch.length; i++) {
-        const game = gamesToFetch[i];
-        console.log(`[${i+1}/${gamesToFetch.length}] New Scan: ${game.game_name}`);
-        const ranks = await fetchRankingsForGame(game);
-        newRankings = newRankings.concat(ranks);
-        await wait(1000); // 1s interval
-    }
-
-    // 5. Merge & Prune
-    // Merge new data with old data
-    let mergedData = [...existingData, ...newRankings];
+    // 5. Merge & Save
+    let mergedRankings = [...existingRankData, ...newRankings];
+    let mergedMatches = [...existingMatchData, ...newMatches];
     
-    // Optional: Prune very old data from the cache file (e.g. keep only last 12 months)
-    // For now, we keep everything to build a long history.
+    const now = Date.now();
+    const dateStr = new Date().toLocaleString();
 
-    // 6. Save to Disk
-    const cachePayload = {
-        updatedAt: Date.now(),
-        dateString: new Date().toLocaleString(),
-        count: mergedData.length,
+    // Save Rankings
+    const rankPayload = {
+        updatedAt: now,
+        dateString: dateStr,
+        count: mergedRankings.length,
         city: "广州市",
-        data: mergedData
+        data: mergedRankings
     };
+    fs.writeFileSync(rankingsPath, JSON.stringify(rankPayload));
 
-    fs.writeFileSync(dataPath, JSON.stringify(cachePayload));
-    console.log(`\n🎉 增量更新完成! 新增 ${newRankings.length} 条，总计 ${mergedData.length} 条。`);
-    console.log(`💾 文件保存至: ${dataPath}`);
+    // Save Matches
+    const matchPayload = {
+        updatedAt: now,
+        dateString: dateStr,
+        count: mergedMatches.length,
+        city: "广州市",
+        data: mergedMatches
+    };
+    fs.writeFileSync(matchesPath, JSON.stringify(matchPayload));
+
+    console.log(`\n🎉 增量更新完成!`);
+    if (newRankings.length > 0) console.log(`   + 新增排名: ${newRankings.length} 条`);
+    if (newMatches.length > 0) console.log(`   + 新增比分: ${newMatches.length} 条`);
+    console.log(`💾 数据已持久化到磁盘。`);
 }
 
 // --- Robust Scheduler ---
 function scheduleNextRun() {
     const now = new Date();
     
-    // Target: Next 5:00 AM (Beijing/Shanghai Time, UTC+8)
-    // Container time is likely UTC. 5 AM CN = 21:00 UTC previous day.
-    // Let's rely on local time logic relative to where the node process thinks it is.
-    // If user set timezone in Docker, this works naturally. If UTC, we target 21:00 UTC.
-    
-    // We'll target 21:00 UTC (which is 05:00 Beijing) to be safe for Docker default.
+    // Target: Next 5:00 AM (Beijing/Shanghai Time, UTC+8) -> UTC 21:00 previous day
     const targetHourUTC = 21; 
     
     let nextRun = new Date();
     nextRun.setUTCHours(targetHourUTC, 0, 0, 0);
     
-    // If 21:00 UTC today has passed, schedule for tomorrow
     if (now > nextRun) {
         nextRun.setDate(nextRun.getDate() + 1);
     }
@@ -302,7 +425,6 @@ function scheduleNextRun() {
         } catch (e) {
             console.error("Daily update failed:", e);
         } finally {
-            // Schedule the next one recursively to prevent drift
             scheduleNextRun();
         }
     }, delay);
@@ -310,20 +432,18 @@ function scheduleNextRun() {
 
 // --- Init ---
 
-// 1. Immediate Login
-loginAndSave();
-
-// 2. Initial Data Check
-if (!fs.existsSync(dataPath)) {
+// 1. Initial Data Check
+if (!fs.existsSync(rankingsPath)) {
     console.log("📂 未发现缓存文件，3秒后执行首次全量抓取...");
     setTimeout(runDailyUpdate, 3000); 
 } else {
-    // If file exists, check if we missed today's run? 
-    // Simplified: Just run schedule. User can manually run if needed.
+    // Run update on start to catch up if container was down, then schedule
+    console.log("⚡ 系统启动，正在检查数据完整性...");
+    setTimeout(runDailyUpdate, 3000);
 }
 
-// 3. Start Scheduler
+// 2. Start Scheduler
 scheduleNextRun();
 
-// 4. Token Refresh (Keep session alive)
+// 3. Token Refresh (Keep session alive)
 setInterval(loginAndSave, 2 * 60 * 60 * 1000);

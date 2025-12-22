@@ -139,14 +139,9 @@ export const fetchAggregatedRankings = async (
 ): Promise<{source: 'CACHE' | 'LIVE', data: PlayerRank[], updatedAt?: string}> => {
   
   // --- CACHE LAYER OPTIMIZATION ---
-  // If the user is searching for "Guangzhou", try to load the daily cache first.
   if (searchConfig.city.includes('广州') || searchConfig.province.includes('广东')) {
       try {
           onProgress("正在检查每日系统缓存...", 5);
-          
-          // Optimization: Use hourly timestamp.
-          // This allows browser caching to work for 1 hour, significantly reducing bandwidth
-          // while still ensuring users get the 5 AM update relatively quickly.
           const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
           const cacheRes = await fetch(`/daily_rankings.json?t=${hourTs}`); 
           
@@ -156,27 +151,22 @@ export const fetchAggregatedRankings = async (
                   const updateTimeStr = new Date(cacheData.updatedAt).toLocaleString();
                   onProgress(`命中每日缓存 (${updateTimeStr} 更新)`, 20);
                   
-                  // Perform client-side filtering on the massive cached dataset
                   const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
                   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
                   const gameKeywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
                   const nameRegex = gameKeywords.length > 0 ? new RegExp(gameKeywords.join('|')) : null;
                   
                   const filtered = cacheData.data.filter((rank: PlayerRank) => {
-                       // 1. Filter by Game Name
                        if (nameRegex && !nameRegex.test(rank.game_name)) return false;
 
-                       // 2. Filter by Group/Age
                        const gName = (rank.groupName || '').toUpperCase();
                        const matchGroup = groupKeys.some(k => gName.includes(k));
                        if (!matchGroup) return false;
 
-                       // 3. Filter by Item Type (if specified)
                        if (typeKeys.length > 0) {
                            const matchType = typeKeys.some(k => gName.includes(k)); 
                            if (!matchType) return false;
                        }
-
                        return true;
                   });
 
@@ -189,12 +179,11 @@ export const fetchAggregatedRankings = async (
               }
           }
       } catch (e) {
-          console.log("Cache miss or error, falling back to live API");
+          console.log("Ranking cache miss or error", e);
       }
   }
 
-  // --- FALLBACK TO LIVE API (Original Logic) ---
-  
+  // --- FALLBACK TO LIVE API ---
   const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
   
@@ -202,17 +191,12 @@ export const fetchAggregatedRankings = async (
   
   const results = await runInBatches(games, 5, async (game, index) => {
     const ranksInGame: PlayerRank[] = [];
-    
     try {
       if (index % 2 === 0) {
         processedCount = index + 1;
         onProgress(`正在极速扫描: ${game.game_name}`, Math.floor((processedCount / games.length) * 50) + 10);
       }
-
-      // Generate fresh timestamp for each request batch
       const effectiveSnTime = Date.now();
-
-      // A. Get Items
       const itemsUrl = 'https://race.ymq.me/webservice/appWxRace/allItems.do';
       const itemsRes = await fetch(itemsUrl, {
         method: 'POST',
@@ -234,7 +218,6 @@ export const fetchAggregatedRankings = async (
         return matchesGroup && matchesType;
       });
 
-      // B. Get Rankings
       await Promise.all(relevantItems.map(async (item: any) => {
         try {
           const rankUrl = 'https://race.ymq.me/webservice/appWxRank/showRankScore.do';
@@ -247,7 +230,6 @@ export const fetchAggregatedRankings = async (
             })
           });
           const rankData = await rankRes.json();
-          
           if (rankData?.detail) {
             rankData.detail.forEach((r: any) => {
               ranksInGame.push({
@@ -263,7 +245,6 @@ export const fetchAggregatedRankings = async (
           }
         } catch (innerE) {}
       }));
-
     } catch (e) {
       console.warn(`Error scanning game ${game.id}`, e);
     }
@@ -280,6 +261,38 @@ export const fetchPlayerMatches = async (
   games: GameBasicInfo[],
   onProgress: (msg: string, progress: number) => void
 ): Promise<MatchScoreResult[]> => {
+  
+  // --- CACHE LAYER OPTIMIZATION FOR MATCHES ---
+  // Try to load full match history from daily static file first
+  try {
+      onProgress("正在搜索本地比分数据库...", 5);
+      const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
+      const cacheRes = await fetch(`/daily_matches.json?t=${hourTs}`);
+      
+      if (cacheRes.ok) {
+          const cacheData = await cacheRes.json();
+          if (cacheData && Array.isArray(cacheData.data) && cacheData.data.length > 0) {
+              onProgress("命中本地比分库，正在筛选...", 20);
+              
+              // Filter locally
+              const hits = cacheData.data.filter((m: MatchScoreResult) => {
+                  return m.playerA.includes(playerName) || m.playerB.includes(playerName);
+              });
+              
+              if (hits.length > 0) {
+                  onProgress(`本地数据库筛选完成，找到 ${hits.length} 场记录`, 100);
+                  // Return sorted by date (if possible, currently matchTime is a string, assuming fetch order is roughly chronological)
+                  return hits;
+              } else {
+                  onProgress("本地库未收录该选手，转为全网实时搜索...", 10);
+              }
+          }
+      }
+  } catch(e) {
+      console.log("Match cache miss, falling back to live");
+  }
+
+  // --- FALLBACK TO LIVE API ---
   let processedCount = 0;
 
   const results = await runInBatches(games, 8, async (game, index) => {
@@ -290,7 +303,6 @@ export const fetchPlayerMatches = async (
        onProgress(`正在全网检索: ${game.game_name}`, Math.floor((processedCount / games.length) * 100));
     }
 
-    // Use current time
     const effectiveSnTime = Date.now();
     const url = `https://race.ymq.me/webservice/appWxMatch/matchesScore.do?t=${effectiveSnTime}`;
     
