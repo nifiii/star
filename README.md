@@ -26,41 +26,82 @@
 
 ---
 
-## 🚀 部署指南 (Docker)
+## 🚀 宿主机部署指南 (Production Deployment)
 
 本项目的 Docker 镜像采用 **All-in-One** 设计，同一个容器内运行 Nginx（提供网页服务）和 Node.js 脚本（提供 Token 更新）。
 
-### 1. 准备环境
+### 1. 准备环境 (Prerequisites)
 
-确保服务器已安装 Docker。
+*   一台 Linux 服务器 (Ubuntu/CentOS/Debian)
+*   已安装 [Docker](https://docs.docker.com/engine/install/)
+*   你的 Google Gemini API Key
+*   你的华体汇账号和密码
 
-### 2. 构建镜像
+### 2. 获取代码
 
-你需要提供 Gemini API Key 作为构建参数（因为 Vite 是在构建时注入环境变量的）。
+将项目代码上传至服务器，或使用 Git 克隆：
 
 ```bash
+git clone <your-repo-url>
+cd huatihui-data-insight
+```
+
+### 3. 构建镜像 (Build)
+
+构建过程中需要注入 Gemini API Key（因为 Vite 是在构建时将环境变量打包进前端静态代码的）。
+
+```bash
+# 注意：请将 your_gemini_api_key_here 替换为实际的 Key
 docker build \
-  --build-arg API_KEY="你的_GOOGLE_GEMINI_KEY" \
+  --build-arg API_KEY="your_gemini_api_key_here" \
   -t hth-dashboard \
   -f Dockerfile.gemini.txt .
 ```
 
-### 3. 运行容器
+### 4. 运行容器 (Run)
 
-华体汇的账号密码通过环境变量传入，以便脚本自动登录。
+启动容器时，需要通过环境变量传入华体汇的账号密码，以便后台脚本自动登录。
 
 ```bash
 docker run -d \
-  -p 8080:80 \
-  -e HTH_USER="你的华体汇账号" \
-  -e HTH_PASS="你的华体汇密码" \
-  --name my-dashboard \
+  --name my-hth-dashboard \
+  --restart always \
+  -p 80:80 \
+  -e HTH_USER="13800138000" \
+  -e HTH_PASS="YourPassword123" \
   hth-dashboard
 ```
 
-访问 `http://localhost:8080` 即可使用。
+*   `-d`: 后台运行
+*   `--restart always`: 开机自启或崩溃重启
+*   `-p 80:80`: 将服务器的 80 端口映射到容器的 80 端口
+*   `-e HTH_USER/...`: 注入账号凭证
 
-> **注意**: 容器启动后，后台脚本需要约 10-20 秒完成首次登录并生成 `auth_config.json`。如果刚打开页面提示 "Token 未就绪"，请稍等片刻并点击页面上的 "刷新凭证"。
+### 5. 验证与维护
+
+**查看运行日志：**
+
+如果你发现页面一直提示 "Token 未就绪"，请查看后台脚本的日志：
+
+```bash
+docker logs -f my-hth-dashboard
+```
+
+你应该能看到类似 `🚀 启动自动登录任务...` 和 `⚡ 捕获到 Token!` 的日志。
+
+**更新部署：**
+
+如果代码有更新，请执行：
+
+```bash
+git pull
+# 重新构建
+docker build --build-arg API_KEY="xxx" -t hth-dashboard -f Dockerfile.gemini.txt .
+# 停止旧容器
+docker stop my-hth-dashboard && docker rm my-hth-dashboard
+# 启动新容器
+docker run -d --name my-hth-dashboard --restart always -p 80:80 -e HTH_USER="xxx" -e HTH_PASS="xxx" hth-dashboard
+```
 
 ---
 
