@@ -68,135 +68,122 @@ async function runTask() {
     
     let tokenData = null;
 
-    // --- 增强日志：监听请求 ---
+    // --- 核心逻辑修改：监听 Request 的 Post Data ---
     await page.setRequestInterception(true);
     page.on('request', request => {
         const url = request.url();
-        if (url.includes('ymq.me') && (request.resourceType() === 'xhr' || request.resourceType() === 'fetch')) {
-            console.log(`   -> REQ: ${url.split('?')[0].split('/').pop()}`); // 只打印文件名，保持整洁
+        const resourceType = request.resourceType();
+        const method = request.method();
+
+        // 1. 打印 API 请求日志 (过滤掉图片/CSS等)
+        if (url.includes('ymq.me') && (resourceType === 'xhr' || resourceType === 'fetch')) {
+            console.log(`   -> REQ [${method}]: ${url.split('?')[0].split('/').pop()}`); 
         }
+
+        // 2. 关键：解析 Request Payload (Post Data)
+        // 目标接口: getgamefulllist, getUserInfo, login 等都会在 body 中带上 header 对象
+        if (method === 'POST' && url.includes('ymq.me')) {
+            const postData = request.postData();
+            if (postData) {
+                try {
+                    const json = JSON.parse(postData);
+                    // 检查结构: { header: { token: "...", sn: "..." } }
+                    // 这是根据您的日志分析出来的最准确的数据源
+                    if (json?.header?.token && json?.header?.sn) {
+                         // 防止覆盖，优先捕获
+                        if (!tokenData) {
+                             console.log(`⚡ [Request Payload] 成功捕获凭证! 来源: ${url.split('/').pop()}`);
+                             console.log(`   Token: ${json.header.token.substring(0, 10)}...`);
+                             console.log(`   SN:    ${json.header.sn.substring(0, 10)}...`);
+                             
+                             tokenData = {
+                                token: json.header.token,
+                                sn: json.header.sn,
+                                snTime: json.header.snTime || Date.now(),
+                                username: CREDENTIALS.username,
+                                updatedAt: new Date().toLocaleString()
+                             };
+                        }
+                    }
+                } catch (e) {
+                    // 忽略非 JSON 的 post data
+                }
+            }
+        }
+        
         request.continue();
     });
 
-    // --- 监听响应捕获 Token ---
+    // --- 辅助逻辑：保留监听响应作为备份 ---
     page.on('response', async (response) => {
       const url = response.url();
-      const request = response.request();
-      
-      // 检查 Response Body (JSON)
-      if ((url.includes('login') || url.includes('getUserInfo') || url.includes('getGameList')) && url.includes('ymq.me')) {
+      if ((url.includes('login') || url.includes('getUserInfo')) && url.includes('ymq.me')) {
         try {
+          // 有些接口可能会在 Response 中返回新的 Token，作为备份检查
           const contentType = response.headers()['content-type'];
           if (contentType && contentType.includes('application/json')) {
-            // 克隆 token 处理逻辑
             const data = await response.json();
-            if (data?.header?.token) {
-              if (!tokenData) {
-                console.log(`⚡ [Body] 成功捕获 Token: ${url}`);
-                tokenData = {
+            if (data?.header?.token && !tokenData) {
+               console.log(`⚡ [Response Body] 捕获到 Token: ${url}`);
+               tokenData = {
                   token: data.header.token,
                   sn: data.header.sn || '',
                   snTime: Date.now(),
                   username: CREDENTIALS.username,
                   updatedAt: new Date().toLocaleString()
-                };
-              }
+               };
             }
           }
-        } catch (e) { /* ignore json parse errors */ }
-      }
-      
-      // 检查 Request Headers (Token 复用)
-      const reqHeaders = request.headers();
-      if (!tokenData && reqHeaders['token']) {
-         // 过滤掉空 token 或 'undefined' 字符串
-         if (reqHeaders['token'] && reqHeaders['token'] !== 'undefined') {
-             console.log(`⚡ [Header] 成功提取 Token: ${url.split('/').pop()}`);
-             tokenData = {
-               token: reqHeaders['token'],
-               sn: reqHeaders['sn'] || '',
-               snTime: Date.now(),
-               username: CREDENTIALS.username,
-               updatedAt: new Date().toLocaleString()
-             };
-         }
+        } catch (e) { /* ignore */ }
       }
     });
 
     console.log(`🔗 前往首页: ${HOME_PAGE}`);
-    // 使用 networkidle2 (至少2个网络连接空闲)，比 networkidle0 更宽容，防止长轮询卡住
+    // 使用 networkidle2 (至少2个网络连接空闲)
     await page.goto(HOME_PAGE, { waitUntil: 'networkidle2', timeout: 45000 });
 
-    const currentUrl = page.url();
     const title = await page.title();
-    console.log(`📄 页面加载完成: "${title}" [${currentUrl}]`);
+    console.log(`📄 页面加载完成: "${title}"`);
 
-    // 打印页面上的部分文本，帮助判断状态
-    const bodyText = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').substring(0, 100));
-    console.log(`👀 页面预览: ${bodyText}...`);
-
-    // 检查密码框
+    // 检查是否需要登录
     const passwordInput = await page.$('input[type="password"]');
 
     if (passwordInput) {
-      console.log('🔒 发现密码输入框，准备登录...');
-      
-      // 尝试寻找账号输入框
-      // 很多移动端页面是先输入账号，或者账号框就在密码框上面
-      // 我们找所有 visible 的 input
+      console.log('🔒 发现密码输入框，执行登录...');
       const inputs = await page.$$('input:not([type="hidden"])');
-      console.log(`📝 发现 ${inputs.length} 个输入框`);
-      
-      // 假设第一个是账号，第二个是密码（通常情况）
-      // 或者根据 placeholder 查找 (如果有)
-      
       if (inputs.length >= 2) {
-          // 清空并输入账号
           await inputs[0].click({ clickCount: 3 });
           await inputs[0].type(CREDENTIALS.username, { delay: 50 });
           
-          // 清空并输入密码
-          // 重新获取 passwordInput 确保引用有效
           const passInput = await page.$('input[type="password"]');
           if (passInput) {
               await passInput.click({ clickCount: 3 });
               await passInput.type(CREDENTIALS.password, { delay: 50 });
               
-              // 寻找登录按钮
-              // 策略：寻找包含“登录”文本的 button 或 div
+              // 提交登录
               const loginBtn = await page.evaluateHandle(() => {
                   const elements = Array.from(document.querySelectorAll('button, div[role="button"], span, div'));
-                  return elements.find(el => {
-                      const text = el.innerText ? el.innerText.trim() : '';
-                      return text === '登录' && el.offsetParent !== null; // visible check
-                  });
+                  return elements.find(el => (el.innerText || '').trim() === '登录');
               });
-
               if (loginBtn && loginBtn.asElement()) {
-                  console.log('🖱️ 点击登录按钮...');
                   await loginBtn.asElement().click();
               } else {
-                  console.log('⚠️ 未找到明显的登录按钮，尝试回车提交...');
                   await passInput.press('Enter');
               }
-              
-              await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(e => console.log('Wait nav error (ignored):', e.message));
+              await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
           }
       }
-
     } else {
-      console.log('✅ 未找到密码框，推测可能已登录或在中间页。');
-      
-      const cookies = await page.cookies();
-      console.log(`🍪 当前 Cookies: ${cookies.length} 个`);
-
-      // 强制跳转到“我的”页面，这通常会触发 getUserInfo
-      console.log(`➡️ 强制跳转至个人中心 (${MINE_PAGE}) 以刷新 Token...`);
-      await page.goto(MINE_PAGE, { waitUntil: 'networkidle2', timeout: 30000 });
+      console.log('✅ 看起来已经登录了。');
+      // 如果还没捕获到 Token，尝试跳转到个人中心触发更多接口
+      if (!tokenData) {
+          console.log(`➡️ 跳转至个人中心 (${MINE_PAGE}) 以触发接口...`);
+          await page.goto(MINE_PAGE, { waitUntil: 'networkidle2', timeout: 30000 });
+      }
     }
 
     // 等待捕获 Token
-    console.log('⏳ 等待 Token 捕获 (10秒)...');
+    console.log('⏳ 等待数据捕获 (10秒)...');
     const startTime = Date.now();
     while (!tokenData && Date.now() - startTime < 10000) {
       await new Promise(r => setTimeout(r, 500));
@@ -204,24 +191,13 @@ async function runTask() {
 
     if (tokenData) {
       fs.writeFileSync(outputPath, JSON.stringify(tokenData, null, 2));
-      console.log(`🎉 成功！凭证已更新: ${outputPath}`);
-      console.log(`🔑 Token: ${tokenData.token.substring(0, 15)}...`);
+      console.log(`💾 凭证已更新并写入: ${outputPath}`);
     } else {
-      console.error('❌ 本次任务失败：页面已加载但未捕获到 Token。请检查上方请求日志。');
+      console.error('❌ 本次任务失败：页面请求已发送，但未解析到 Header 中的 Token。');
     }
 
   } catch (error) {
     console.error('❌ 致命错误:', error);
-    // 截图帮助调试 (Base64)
-    try {
-        if (browser && browser.isConnected()) { // Ensure browser is still open
-            const pages = await browser.pages();
-            if (pages.length > 0) {
-                 const title = await pages[0].title();
-                 console.log(`出错时页面标题: ${title}`);
-            }
-        }
-    } catch (e) {}
   } finally {
     if (browser) await browser.close();
   }
