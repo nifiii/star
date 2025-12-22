@@ -4,7 +4,7 @@ import ConfigPanel from './components/ConfigPanel';
 import LogViewer from './components/LogViewer';
 import { fetchGameList, fetchAggregatedRankings, fetchPlayerMatches, getMockRanks, getMockMatches } from './services/huaTiHuiService';
 import { analyzeData } from './services/geminiService';
-import { Download, ArrowLeft, Trophy, BarChart2, Sparkles, X, Medal, Smile, Frown, Lightbulb } from 'lucide-react';
+import { Download, ArrowLeft, Trophy, BarChart2, Sparkles, X, Medal, Smile, Frown, Lightbulb, Database, Zap } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ReactMarkdown from 'react-markdown';
 
@@ -35,7 +35,7 @@ const INITIAL_SEARCH_CONFIG: SearchConfig = {
   targetPlayerName: ''
 };
 
-const App: React.FC = () => {
+export const App: React.FC = () => {
   // State
   const [config, setConfig] = useState<ApiHeaderConfig>(INITIAL_CONFIG);
   const [userCredentials, setUserCredentials] = useState<UserCredentials>(INITIAL_CREDENTIALS);
@@ -50,6 +50,8 @@ const App: React.FC = () => {
   // Data Cache
   const [cachedGames, setCachedGames] = useState<GameBasicInfo[]>([]);
   const [rankings, setRankings] = useState<PlayerRank[]>([]);
+  const [rankingSource, setRankingSource] = useState<{type: 'CACHE' | 'LIVE', time?: string} | null>(null);
+
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [matchHistory, setMatchHistory] = useState<MatchScoreResult[]>([]);
   const [lastCacheTime, setLastCacheTime] = useState<string>('');
@@ -192,6 +194,7 @@ const App: React.FC = () => {
       }
     });
     setLastCacheTime('');
+    setRankingSource(null);
     addLog("🗑️ 缓存已清理，下次查询将从服务器获取最新数据。", "info");
   };
 
@@ -228,23 +231,25 @@ const App: React.FC = () => {
       return;
     }
 
-    // CHECK CACHE FIRST
+    // CHECK BROWSER LOCAL STORAGE CACHE FIRST
     const cacheKey = getCacheKey('rankings', `${searchConfig.province}_${searchConfig.city}_${searchConfig.birthYear}_${searchConfig.gameKeywords}_${searchConfig.groupKeywords}`);
-    const cachedData = loadFromCache<PlayerRank[]>(cacheKey);
+    const localCachedData = loadFromCache<PlayerRank[]>(cacheKey);
 
     setStatus(StepStatus.LOADING);
     setLogs([]);
     setRankings([]);
+    setRankingSource(null);
     setDashboardAnalysis(""); 
     setProgress(0);
     setView('DASHBOARD_RANKS');
     setLastCacheTime('');
     setHasAuthError(false);
 
-    if (cachedData) {
-      addLog("⚡ 发现有效的本地缓存，正在加载...", "success");
+    if (localCachedData) {
+      addLog("⚡ 发现有效的本地浏览器缓存，正在加载...", "success");
       setTimeout(() => {
-        setRankings(cachedData);
+        setRankings(localCachedData);
+        setRankingSource({ type: 'CACHE', time: '浏览器本地缓存' });
         addLog(`✅ 加载完成！(数据来源: 本地缓存)`, "success");
         setStatus(StepStatus.COMPLETE);
       }, 500); 
@@ -267,17 +272,22 @@ const App: React.FC = () => {
       setCachedGames(games); 
       addLog(`✅ 锁定 ${games.length} 个相关赛事! 开始抓取排名...`, "success");
 
-      const ranks = await fetchAggregatedRankings(
+      const result = await fetchAggregatedRankings(
         config,
         searchConfig,
         games,
         (msg, prog) => setProgress(prog)
       );
 
-      setRankings(ranks);
-      saveToCache(cacheKey, ranks);
+      setRankings(result.data);
+      setRankingSource({ 
+          type: result.source, 
+          time: result.updatedAt 
+      });
 
-      addLog(`🎉 大功告成！获取到 ${ranks.length} 条排名数据。`, "success");
+      saveToCache(cacheKey, result.data);
+
+      addLog(`🎉 大功告成！获取到 ${result.data.length} 条排名数据。`, "success");
       setStatus(StepStatus.COMPLETE);
 
     } catch (e: any) {
@@ -426,6 +436,8 @@ const App: React.FC = () => {
     if (matchHistory.length === 0) return;
     setIsAnalyzing(true);
     setPlayerAnalysis("AI 正在思考中... 🧠");
+    
+    // UPDATED: Pass log callback to see AI process in UI
     const result = await analyzeData(matchHistory, `
       分析选手 "${selectedPlayer}" 的比赛数据。
       请用 Markdown 格式输出，包含以下部分（使用 ### 作为标题）：
@@ -441,7 +453,10 @@ const App: React.FC = () => {
       
       请保持语气像一位和蔼可亲、充满激情的金牌青少年教练。
       重点数据请加粗显示。
-    `);
+    `, (msg, type) => {
+        addLog(`[AI] ${msg}`, type);
+    });
+
     setPlayerAnalysis(result);
     setIsAnalyzing(false);
   };
@@ -450,6 +465,8 @@ const App: React.FC = () => {
     if (rankings.length === 0) return;
     setIsAnalyzing(true);
     setDashboardAnalysis("AI 正在观察榜单... 🧐");
+    
+    // UPDATED: Pass log callback
     const result = await analyzeData(rankings, `
       分析以下青少年羽毛球比赛的排名数据。
       请用 Markdown 格式输出，包含以下部分（使用 ### 作为标题）：
@@ -464,7 +481,10 @@ const App: React.FC = () => {
       (推荐几个值得关注的选手)
       
       请用简单易懂的中文回答。
-    `);
+    `, (msg, type) => {
+        addLog(`[AI] ${msg}`, type);
+    });
+
     setDashboardAnalysis(result);
     setIsAnalyzing(false);
   };
@@ -573,21 +593,34 @@ const App: React.FC = () => {
               )}
 
               <div className="bg-white rounded-[2rem] shadow-xl border border-slate-100 overflow-hidden flex flex-col h-[700px]">
-                <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-white to-slate-50 flex justify-between items-center">
+                <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-white to-slate-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div>
                     <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                       <Medal className="w-6 h-6 text-kid-yellow" />
                       积分龙虎榜
                     </h3>
-                    <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">
-                      Leaderboard
-                    </p>
+                    
+                    {/* Data Source Badge */}
+                    <div className="flex items-center gap-2 mt-1">
+                      {rankingSource ? (
+                         <div className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 border ${
+                            rankingSource.type === 'CACHE' 
+                              ? 'bg-green-50 text-green-600 border-green-200' 
+                              : 'bg-blue-50 text-blue-600 border-blue-200'
+                         }`}>
+                           {rankingSource.type === 'CACHE' ? <Database className="w-3 h-3"/> : <Zap className="w-3 h-3"/>}
+                           {rankingSource.type === 'CACHE' ? `已缓存 (${rankingSource.time})` : '实时数据'}
+                         </div>
+                      ) : (
+                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Leaderboard</p>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 w-full md:w-auto">
                     <button
                       onClick={handleDashboardAnalysis}
                       disabled={rankings.length === 0 || isAnalyzing}
-                      className="text-sm font-bold bg-kid-purple/10 text-kid-purple hover:bg-kid-purple hover:text-white px-4 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50 transition-all active:scale-95"
+                      className="flex-1 md:flex-none text-sm font-bold bg-kid-purple/10 text-kid-purple hover:bg-kid-purple hover:text-white px-4 py-2 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 transition-all active:scale-95"
                     >
                       <Sparkles className="w-4 h-4" /> 
                       {isAnalyzing && !dashboardAnalysis ? "思考中..." : "AI 分析"}
@@ -595,7 +628,7 @@ const App: React.FC = () => {
                     <button 
                       onClick={() => exportExcel(rankings, 'Rankings.xlsx')}
                       disabled={rankings.length === 0}
-                      className="text-sm font-bold bg-kid-green/10 text-kid-green hover:bg-kid-green hover:text-white px-4 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50 transition-all active:scale-95"
+                      className="flex-1 md:flex-none text-sm font-bold bg-kid-green/10 text-kid-green hover:bg-kid-green hover:text-white px-4 py-2 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 transition-all active:scale-95"
                     >
                       <Download className="w-4 h-4" /> 导出
                     </button>
@@ -606,11 +639,11 @@ const App: React.FC = () => {
                   <table className="w-full text-left text-sm border-separate border-spacing-y-2">
                     <thead className="text-slate-500 sticky top-0 z-10">
                       <tr>
-                        <th className="px-4 py-2 font-bold text-xs uppercase bg-white">排名</th>
+                        <th className="px-4 py-2 font-bold text-xs uppercase bg-white w-16">排名</th>
                         <th className="px-4 py-2 font-bold text-xs uppercase bg-white">小选手</th>
-                        <th className="px-4 py-2 font-bold text-xs uppercase bg-white">俱乐部</th>
+                        <th className="px-4 py-2 font-bold text-xs uppercase bg-white hidden md:table-cell">俱乐部</th>
                         <th className="px-4 py-2 font-bold text-xs uppercase bg-white">积分</th>
-                        <th className="px-4 py-2 font-bold text-xs uppercase bg-white">来源赛事</th>
+                        <th className="px-4 py-2 font-bold text-xs uppercase bg-white hidden md:table-cell">来源赛事</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -641,25 +674,34 @@ const App: React.FC = () => {
                                </div>
                             </td>
                             <td className="px-4 py-4">
-                              <button 
-                                onClick={() => handlePlayerClick(row.playerName)}
-                                className="font-bold text-slate-800 text-base hover:text-kid-primary hover:underline flex items-center gap-2"
-                              >
-                                {row.playerName}
-                                <span className="bg-white text-kid-primary border border-kid-primary text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                                  查看战绩
+                              <div className="flex flex-col">
+                                <button 
+                                  onClick={() => handlePlayerClick(row.playerName)}
+                                  className="font-bold text-slate-800 text-base hover:text-kid-primary hover:underline flex items-center gap-2 text-left"
+                                >
+                                  {row.playerName}
+                                </button>
+                                {/* Mobile Only: Club Name */}
+                                <span className="text-xs text-slate-400 font-medium md:hidden mt-0.5 truncate max-w-[120px]">
+                                  {row.club || '-'}
                                 </span>
-                              </button>
+                              </div>
                             </td>
-                            <td className="px-4 py-4 text-slate-500 font-medium">{row.club || '-'}</td>
+                            {/* Desktop Only: Club Name */}
+                            <td className="px-4 py-4 text-slate-500 font-medium hidden md:table-cell">{row.club || '-'}</td>
                             <td className="px-4 py-4">
                               <span className="font-mono font-bold text-kid-primary text-lg">{row.score}</span>
                             </td>
                             <td className="px-4 py-4 rounded-r-xl">
-                               <div className="text-xs font-bold text-slate-600 bg-white inline-block px-2 py-1 rounded border border-slate-200 mb-1">
-                                 {row.groupName}
+                               <div className="flex flex-col items-start">
+                                  <div className="text-xs font-bold text-slate-600 bg-white inline-block px-2 py-1 rounded border border-slate-200 mb-1">
+                                    {row.groupName}
+                                  </div>
+                                  {/* Mobile: Source Game below Group */}
+                                  <div className="text-xs text-slate-400 truncate max-w-[100px] md:hidden">{row.game_name}</div>
                                </div>
-                               <div className="text-xs text-slate-400 truncate max-w-[150px]">{row.game_name}</div>
+                               {/* Desktop: Source Game on separate line/block properly handled by hidden md:table-cell logic above if needed, but here we keep structure simple */}
+                               <div className="text-xs text-slate-400 truncate max-w-[150px] hidden md:block">{row.game_name}</div>
                             </td>
                           </tr>
                         ))
@@ -686,7 +728,7 @@ const App: React.FC = () => {
                      <span className="bg-kid-primary text-white px-3 py-1 rounded-xl shadow-md rotate-[-2deg] inline-block">
                        {selectedPlayer}
                      </span> 
-                     的生涯档案
+                     <span className="hidden md:inline">的生涯档案</span>
                    </h3>
                 </div>
               </div>
@@ -695,14 +737,14 @@ const App: React.FC = () => {
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                   <div className="flex items-center gap-2">
                      <span className="bg-kid-blue w-2 h-2 rounded-full"></span>
-                     <span className="font-bold text-slate-600">比赛记录: {matchHistory.length} 场</span>
+                     <span className="font-bold text-slate-600 text-sm md:text-base">比赛记录: {matchHistory.length} 场</span>
                   </div>
                   <button 
                     onClick={() => exportExcel(matchHistory, `${selectedPlayer}_history.xlsx`)}
                     disabled={matchHistory.length === 0}
                     className="text-sm font-bold text-kid-green hover:bg-green-50 px-3 py-2 rounded-lg flex items-center gap-1 transition-colors"
                   >
-                    <Download className="w-4 h-4" /> 下载表格
+                    <Download className="w-4 h-4" /> <span className="hidden md:inline">下载表格</span>
                   </button>
                 </div>
                 <div className="flex-1 overflow-auto custom-scrollbar p-2">
@@ -712,7 +754,7 @@ const App: React.FC = () => {
                         <th className="px-4 py-2 font-bold">时间 / 轮次</th>
                         <th className="px-4 py-2 font-bold">对手</th>
                         <th className="px-4 py-2 font-bold text-center">比分</th>
-                        <th className="px-4 py-2 font-bold">赛事</th>
+                        <th className="px-4 py-2 font-bold hidden md:table-cell">赛事</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -754,7 +796,11 @@ const App: React.FC = () => {
                               <div className="font-bold text-slate-700">{m.matchTime || '-'}</div>
                               <div className="text-xs font-medium text-slate-400 bg-white border border-slate-200 px-2 py-0.5 rounded inline-block mt-1">{m.round}</div>
                             </td>
-                            <td className="px-4 py-3 font-bold text-slate-600">{opponent}</td>
+                            <td className="px-4 py-3 font-bold text-slate-600">
+                                {opponent}
+                                {/* Mobile: Show game name here if hidden */}
+                                <div className="md:hidden text-[10px] text-slate-300 mt-1 truncate max-w-[80px]">{m.game_name}</div>
+                            </td>
                             <td className="px-4 py-3 text-center">
                               <div className="flex flex-col items-center">
                                 <span className="font-mono font-black text-lg text-slate-800 bg-white px-3 py-1 rounded-lg border-2 border-slate-100 shadow-inner">
@@ -768,7 +814,7 @@ const App: React.FC = () => {
                                 )}
                               </div>
                             </td>
-                            <td className="px-4 py-3 rounded-r-xl">
+                            <td className="px-4 py-3 rounded-r-xl hidden md:table-cell">
                               <div className="text-xs font-bold text-kid-primary truncate max-w-[150px]">{m.game_name}</div>
                               <div className="text-[10px] text-slate-400 mt-0.5">{m.groupName}</div>
                             </td>
@@ -825,5 +871,3 @@ const App: React.FC = () => {
     </div>
   );
 };
-
-export default App;

@@ -11,19 +11,26 @@ server {
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
 
     # 1. 核心 SPA 配置
-    # 所有 404 请求都重定向回 index.html，交给 React Router 处理
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    # 2. 关键配置：auth_config.json 不缓存
-    # 这个文件由后台脚本动态更新，必须保证前端每次获取的都是最新的
+    # 2. 鉴权配置：auth_config.json 不缓存
+    # Token 可能会随时刷新，前端必须获取最新
     location = /auth_config.json {
         add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
         expires off;
     }
 
-    # 3. 静态资源缓存配置 (js, css, images)
+    # 3. 每日榜单数据：daily_rankings.json 缓存 1 小时
+    # 前端请求带有小时级时间戳 (?t=HH)，Nginx 配合 max-age=3600
+    # 这样在一小时内，浏览器会直接读取本地缓存，无需请求服务器
+    location = /daily_rankings.json {
+        add_header Cache-Control "public, max-age=3600";
+        expires 1h;
+    }
+
+    # 4. 静态资源缓存配置 (js, css, images)
     # Vite 生成的文件带有 hash 文件名，可以长时间缓存
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
         expires 1y;

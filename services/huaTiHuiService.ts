@@ -41,8 +41,6 @@ export const generateDefaultKeywords = (birthYear: number) => {
 
 // 1. Get Game Full List
 export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: SearchConfig): Promise<GameBasicInfo[]> => {
-  // CRITICAL UPDATE: As per analysis, snTime should be the CURRENT timestamp of the request.
-  // The SN itself can be fixed (provided via config.sn).
   const effectiveSnTime = Date.now();
   
   const url = `https://applyv3.ymq.me/public/public/getgamefulllist?t=${effectiveSnTime}`;
@@ -132,13 +130,71 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
   }
 };
 
-// 2. Fetch Rankings
+// 2. Fetch Rankings (Aggregated)
 export const fetchAggregatedRankings = async (
   config: ApiHeaderConfig, 
   searchConfig: SearchConfig,
   games: GameBasicInfo[],
   onProgress: (msg: string, progress: number) => void
-): Promise<PlayerRank[]> => {
+): Promise<{source: 'CACHE' | 'LIVE', data: PlayerRank[], updatedAt?: string}> => {
+  
+  // --- CACHE LAYER OPTIMIZATION ---
+  // If the user is searching for "Guangzhou", try to load the daily cache first.
+  if (searchConfig.city.includes('广州') || searchConfig.province.includes('广东')) {
+      try {
+          onProgress("正在检查每日系统缓存...", 5);
+          
+          // Optimization: Use hourly timestamp.
+          // This allows browser caching to work for 1 hour, significantly reducing bandwidth
+          // while still ensuring users get the 5 AM update relatively quickly.
+          const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
+          const cacheRes = await fetch(`/daily_rankings.json?t=${hourTs}`); 
+          
+          if (cacheRes.ok) {
+              const cacheData = await cacheRes.json();
+              if (cacheData && Array.isArray(cacheData.data) && cacheData.data.length > 0) {
+                  const updateTimeStr = new Date(cacheData.updatedAt).toLocaleString();
+                  onProgress(`命中每日缓存 (${updateTimeStr} 更新)`, 20);
+                  
+                  // Perform client-side filtering on the massive cached dataset
+                  const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
+                  const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
+                  const gameKeywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
+                  const nameRegex = gameKeywords.length > 0 ? new RegExp(gameKeywords.join('|')) : null;
+                  
+                  const filtered = cacheData.data.filter((rank: PlayerRank) => {
+                       // 1. Filter by Game Name
+                       if (nameRegex && !nameRegex.test(rank.game_name)) return false;
+
+                       // 2. Filter by Group/Age
+                       const gName = (rank.groupName || '').toUpperCase();
+                       const matchGroup = groupKeys.some(k => gName.includes(k));
+                       if (!matchGroup) return false;
+
+                       // 3. Filter by Item Type (if specified)
+                       if (typeKeys.length > 0) {
+                           const matchType = typeKeys.some(k => gName.includes(k)); 
+                           if (!matchType) return false;
+                       }
+
+                       return true;
+                  });
+
+                  if (filtered.length > 0) {
+                      onProgress(`缓存处理完成，获取到 ${filtered.length} 条数据`, 100);
+                      return { source: 'CACHE', data: filtered, updatedAt: updateTimeStr };
+                  } else {
+                      onProgress("缓存中未找到匹配数据，转为实时抓取...", 10);
+                  }
+              }
+          }
+      } catch (e) {
+          console.log("Cache miss or error, falling back to live API");
+      }
+  }
+
+  // --- FALLBACK TO LIVE API (Original Logic) ---
+  
   const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
   
@@ -150,7 +206,7 @@ export const fetchAggregatedRankings = async (
     try {
       if (index % 2 === 0) {
         processedCount = index + 1;
-        onProgress(`正在极速扫描: ${game.game_name}`, Math.floor((processedCount / games.length) * 50));
+        onProgress(`正在极速扫描: ${game.game_name}`, Math.floor((processedCount / games.length) * 50) + 10);
       }
 
       // Generate fresh timestamp for each request batch
@@ -214,7 +270,7 @@ export const fetchAggregatedRankings = async (
     return ranksInGame;
   });
   
-  return results.flat();
+  return { source: 'LIVE', data: results.flat() };
 };
 
 // 3. Fetch Matches

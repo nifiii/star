@@ -28,7 +28,8 @@ const ConfigPanel: React.FC<Props> = ({
   hasAuthError, onRefreshCredentials
 }) => {
   
-  const [activeTab, setActiveTab] = useState<'rank' | 'player'>('rank');
+  // Default to 'player' tab as requested
+  const [activeTab, setActiveTab] = useState<'rank' | 'player'>('player');
   const [showAdvanced, setShowAdvanced] = useState(false);
   
   // Auto-update keywords when birth year changes
@@ -44,18 +45,8 @@ const ConfigPanel: React.FC<Props> = ({
       {/* 顶部装饰 */}
       <div className="h-3 bg-gradient-to-r from-kid-primary via-kid-purple to-kid-accent"></div>
 
-      {/* 1. 模式选择 Tabs */}
+      {/* 1. 模式选择 Tabs (Swapped Order) */}
       <div className="flex border-b border-slate-100">
-        <button
-          onClick={() => setActiveTab('rank')}
-          className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors relative ${
-            activeTab === 'rank' ? 'text-kid-primary bg-white' : 'text-slate-400 bg-slate-50 hover:bg-slate-100'
-          }`}
-        >
-          <Trophy className={`w-4 h-4 ${activeTab === 'rank' ? 'text-kid-yellow' : ''}`} />
-          查排行榜
-          {activeTab === 'rank' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-kid-primary mx-8 rounded-t-full"></div>}
-        </button>
         <button
           onClick={() => setActiveTab('player')}
           className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors relative ${
@@ -66,12 +57,36 @@ const ConfigPanel: React.FC<Props> = ({
           查小选手
           {activeTab === 'player' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-kid-orange mx-8 rounded-t-full"></div>}
         </button>
+        <button
+          onClick={() => setActiveTab('rank')}
+          className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors relative ${
+            activeTab === 'rank' ? 'text-kid-primary bg-white' : 'text-slate-400 bg-slate-50 hover:bg-slate-100'
+          }`}
+        >
+          <Trophy className={`w-4 h-4 ${activeTab === 'rank' ? 'text-kid-yellow' : ''}`} />
+          查排行榜
+          {activeTab === 'rank' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-kid-primary mx-8 rounded-t-full"></div>}
+        </button>
       </div>
 
       {/* 2. 动态内容区域 */}
       <div className="p-5 space-y-5">
         
         {/* PART A: 输入参数 (Inputs) */}
+
+        {activeTab === 'player' && (
+          <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100 animate-fade-in">
+             <label className="block text-xs font-bold text-slate-500 mb-2 ml-1 text-center">输入小选手的名字</label>
+             <input
+                type="text"
+                value={searchConfig.targetPlayerName || ''}
+                onChange={(e) => onSearchConfigChange('targetPlayerName', e.target.value)}
+                className="w-full px-4 py-3 bg-white border-2 border-orange-200 rounded-xl text-lg text-center font-black text-slate-800 focus:outline-none focus:border-kid-orange placeholder:text-slate-300 placeholder:font-normal"
+                placeholder="例如：林丹"
+              />
+          </div>
+        )}
+
         {activeTab === 'rank' && (
           <div className="bg-blue-50/50 p-3 rounded-2xl border border-blue-100 animate-fade-in">
              <label className="block text-xs font-bold text-slate-500 mb-1 ml-1">出生年份</label>
@@ -111,19 +126,6 @@ const ConfigPanel: React.FC<Props> = ({
                    />
                 </div>
              </div>
-          </div>
-        )}
-
-        {activeTab === 'player' && (
-          <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100 animate-fade-in">
-             <label className="block text-xs font-bold text-slate-500 mb-2 ml-1 text-center">输入小选手的名字</label>
-             <input
-                type="text"
-                value={searchConfig.targetPlayerName || ''}
-                onChange={(e) => onSearchConfigChange('targetPlayerName', e.target.value)}
-                className="w-full px-4 py-3 bg-white border-2 border-orange-200 rounded-xl text-lg text-center font-black text-slate-800 focus:outline-none focus:border-kid-orange placeholder:text-slate-300 placeholder:font-normal"
-                placeholder="例如：林丹"
-              />
           </div>
         )}
 
@@ -182,24 +184,6 @@ const ConfigPanel: React.FC<Props> = ({
         </div>
 
         {/* PART C: 行动按钮 (Action Buttons) */}
-        {activeTab === 'rank' && (
-             <button
-                onClick={onScanRankings}
-                disabled={status === StepStatus.LOADING}
-                className="group w-full py-3.5 bg-kid-primary text-white rounded-xl font-bold shadow-lg shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:translate-y-0 active:scale-95 flex items-center justify-center gap-2 animate-fade-in"
-              >
-                {status === StepStatus.LOADING ? (
-                   <span className="flex items-center gap-2">
-                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                     扫描中...
-                   </span>
-                ) : (
-                  <>
-                    <Search className="w-5 h-5" /> 扫描积分榜
-                  </>
-                )}
-              </button>
-        )}
 
         {activeTab === 'player' && (
              <button
@@ -215,6 +199,25 @@ const ConfigPanel: React.FC<Props> = ({
                 ) : (
                   <>
                    <UserSearch className="w-5 h-5" /> 搜索历史战绩
+                  </>
+                )}
+              </button>
+        )}
+
+        {activeTab === 'rank' && (
+             <button
+                onClick={onScanRankings}
+                disabled={status === StepStatus.LOADING}
+                className="group w-full py-3.5 bg-kid-primary text-white rounded-xl font-bold shadow-lg shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:translate-y-0 active:scale-95 flex items-center justify-center gap-2 animate-fade-in"
+              >
+                {status === StepStatus.LOADING ? (
+                   <span className="flex items-center gap-2">
+                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                     扫描中...
+                   </span>
+                ) : (
+                  <>
+                    <Search className="w-5 h-5" /> 扫描积分榜
                   </>
                 )}
               </button>
