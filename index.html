@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>羽毛球未来之星 - 数据助手</title>
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.561.0",
+    "xlsx": "https://esm.sh/xlsx@^0.18.5",
+    "vite": "https://esm.sh/vite@^5.2.10",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^4.2.1",
+    "react-markdown": "https://esm.sh/react-markdown@9.0.1",
+    "path": "https://esm.sh/path@^0.12.7",
+    "fs": "https://esm.sh/fs@^0.0.1-security",
+    "puppeteer": "https://esm.sh/puppeteer@^24.34.0",
+    "url": "https://esm.sh/url@^0.11.4"
+  }
+}
+</script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['"Comic Sans MS"', '"Chalkboard SE"', 'sans-serif'],
+            },
+            colors: {
+              kid: {
+                bg: '#EFF6FF', // Light blue background
+                card: '#FFFFFF',
+                primary: '#4F46E5', // Indigo
+                secondary: '#F59E0B', // Amber
+                accent: '#EC4899', // Pink
+                success: '#10B981', // Emerald
+                text: '#1E293B', // Slate 800
+                blue: '#60A5FA',
+                yellow: '#FEF08A',
+                orange: '#FB923C',
+                green: '#86EFAC',
+                purple: '#A78BFA'
+              }
+            },
+            borderRadius: {
+              '3xl': '1.5rem',
+              '4xl': '2rem',
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="bg-[#EFF6FF] text-slate-800 font-sans selection:bg-yellow-200">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

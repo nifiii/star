@@ -1,0 +1,5 @@
+{
+  "name": "HuaTiHui Data Insight",
+  "description": "A comprehensive dashboard to scrape, process, and analyze Huatihui badminton match data using custom headers and Gemini AI analysis.",
+  "requestFramePermissions": []
+}
