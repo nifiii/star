@@ -1,21 +1,15 @@
-# 使用 Node 20 作为基础镜像，因为它包含运行 Puppeteer 所需的环境基础
+# 使用 Node 20 作为基础镜像 (原生支持 fetch API)
 FROM node:20-slim
 
 # 设置工作目录
 WORKDIR /app
 
-# 1. 安装 Nginx 和 Puppeteer (Chrome) 所需的系统依赖
-# Puppeteer 需要一系列库才能在 Docker 中运行无头浏览器
+# 1. 安装 Nginx
+# 不再需要 chromium 和字体库，因为脚本改用了直接 API 调用
 RUN apt-get update && apt-get install -y \
     nginx \
-    chromium \
-    fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
-
-# 告诉 Puppeteer 跳过下载 Chrome，我们将使用上面安装的系统 Chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # 2. 复制依赖文件并安装项目依赖
 COPY package*.json ./

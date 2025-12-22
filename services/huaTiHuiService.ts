@@ -13,30 +13,6 @@ const getHeaders = (config: ApiHeaderConfig, referer = 'https://sports.ymq.me/')
 };
 
 // --- Helper: Concurrency Limit Executor ---
-// Execute promises in parallel with a limit to avoid overwhelming the browser/server
-async function pLimit<T>(items: any[], limit: number, fn: (item: any, index: number) => Promise<T>): Promise<T[]> {
-  const results: T[] = [];
-  const executing: Promise<void>[] = [];
-  
-  for (let i = 0; i < items.length; i++) {
-    const p = fn(items[i], i).then(r => { results.push(r); });
-    executing.push(p);
-    
-    if (executing.length >= limit) {
-      await Promise.race(executing); // Wait for one to finish
-      // Clean up finished promises (not strictly necessary for simple usage but good practice)
-      // For simplicity here, we just wait for the race. In a full implementation we'd remove the finished one.
-      // But since we can't easily identify which one finished in Promise.race without wrapper, 
-      // we'll just use a simplified batching or standard semaphore approach.
-      // Let's use a simpler "Chunking" approach for stability in this context.
-    }
-  }
-  // Wait for the rest
-  await Promise.all(executing);
-  return results;
-}
-
-// Simpler Batch helper for readability and stability
 async function runInBatches<T, R>(items: T[], batchSize: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   let results: R[] = [];
   for (let i = 0; i < items.length; i += batchSize) {
@@ -55,51 +31,41 @@ export const generateDefaultKeywords = (birthYear: number) => {
   
   const keywords = [`U${age}`];
   
-  // Logic based on prompt:
-  // 6,7 -> 丙
-  // 8,9 -> 乙
-  // 10,11 -> 甲
   if (age <= 7) keywords.push("丙");
   else if (age <= 9) keywords.push("乙");
   else if (age <= 11) keywords.push("甲");
-  else if (age <= 13) keywords.push("少"); // General assumption
+  else if (age <= 13) keywords.push("少");
 
   return keywords.join(",");
 };
 
 // 1. Get Game Full List
 export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: SearchConfig): Promise<GameBasicInfo[]> => {
-  const url = `https://applyv3.ymq.me/public/public/getgamefulllist?t=${config.snTime || Date.now()}`;
+  // CRITICAL UPDATE: As per analysis, snTime should be the CURRENT timestamp of the request.
+  // The SN itself can be fixed (provided via config.sn).
+  const effectiveSnTime = Date.now();
   
-  // --- Normalize Province and City Logic ---
+  const url = `https://applyv3.ymq.me/public/public/getgamefulllist?t=${effectiveSnTime}`;
+  
   let rawProvince = searchConfig.province.trim();
   let rawCity = searchConfig.city.trim();
 
   const municipalities = ['北京', '上海', '天津', '重庆'];
   
-  // Determine if inputs relate to a Municipality
-  // Case 1: Province field matches "Beijing", "Beijing Shi", etc.
   const provMuniMatch = municipalities.find(m => rawProvince.startsWith(m));
-  // Case 2: City field matches "Beijing" (User might put it in city field accidentally or intentionally)
   const cityMuniMatch = municipalities.find(m => rawCity.startsWith(m));
 
   let finalProvince = "";
   let finalCity = "";
 
   if (provMuniMatch) {
-    // If it is a municipality, normalize name to "XX市" and CLEAR the city field
     finalProvince = provMuniMatch + "市";
     finalCity = ""; 
   } else if (cityMuniMatch) {
-    // If user typed municipality in City field, move it to Province and clear City
     finalProvince = cityMuniMatch + "市";
     finalCity = "";
   } else {
-    // Normal Province Logic
     if (rawProvince) {
-      // If it ends with 市 (rare for non-municipality provinces) or 省, keep it. Otherwise add 省.
-      // Note: Some autonomous regions (Guangxi, etc.) might need special handling, but per prompt instructions:
-      // "Input box is province, must add keyword 省"
       if (rawProvince.endsWith('省') || rawProvince.endsWith('市')) {
         finalProvince = rawProvince;
       } else {
@@ -107,9 +73,7 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
       }
     }
 
-    // Normal City Logic
     if (rawCity) {
-      // Add '市' if missing, preserve suffixes like '区', '盟', '州'
       if (!rawCity.endsWith('市') && !rawCity.endsWith('区') && !rawCity.endsWith('盟') && !rawCity.endsWith('州')) {
         finalCity = rawCity + '市';
       } else {
@@ -118,12 +82,10 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
     }
   }
 
-  // Construct Body dynamically
-  // If finalCity is empty (which happens for Municipalities), we OMIT the city key entirely.
   const requestBody: any = {
     page_num: 1,
     page_size: 100, 
-    statuss: [10], // Filter for "Ended" games (10)
+    statuss: [10], // Filter for "Ended" games
     province: finalProvince ? [finalProvince] : [],
   };
 
@@ -133,7 +95,12 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
 
   const payload = {
     body: requestBody,
-    header: { token: config.token, snTime: config.snTime, sn: config.sn, from: "web" }
+    header: { 
+      token: config.token, 
+      snTime: effectiveSnTime, // Use current timestamp
+      sn: config.sn,           // Use fixed SN from config
+      from: "web" 
+    }
   };
 
   try {
@@ -146,7 +113,6 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
     if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     
-    // Generate Regex from Keywords (comma separated -> OR logic)
     const keywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
     const nameRegex = keywords.length > 0 ? new RegExp(keywords.join('|')) : null;
 
@@ -166,7 +132,7 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
   }
 };
 
-// 2. Fetch Rankings (OPTIMIZED: Concurrent Batches)
+// 2. Fetch Rankings
 export const fetchAggregatedRankings = async (
   config: ApiHeaderConfig, 
   searchConfig: SearchConfig,
@@ -175,35 +141,35 @@ export const fetchAggregatedRankings = async (
 ): Promise<PlayerRank[]> => {
   const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
-
+  
   let processedCount = 0;
   
-  // Process games in batches of 5 to speed up
   const results = await runInBatches(games, 5, async (game, index) => {
     const ranksInGame: PlayerRank[] = [];
     
     try {
-      // Update progress slightly delayed to not flood React state
       if (index % 2 === 0) {
         processedCount = index + 1;
         onProgress(`正在极速扫描: ${game.game_name}`, Math.floor((processedCount / games.length) * 50));
       }
 
-      // A. Get Items (Groups)
+      // Generate fresh timestamp for each request batch
+      const effectiveSnTime = Date.now();
+
+      // A. Get Items
       const itemsUrl = 'https://race.ymq.me/webservice/appWxRace/allItems.do';
       const itemsRes = await fetch(itemsUrl, {
         method: 'POST',
         headers: getHeaders(config, 'https://apply.ymq.me/'),
         body: JSON.stringify({
           body: { raceId: game.id },
-          header: { token: config.token, snTime: config.snTime, sn: config.sn, from: "wx" }
+          header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "wx" }
         })
       });
       const itemsData = await itemsRes.json();
       
       if (!itemsData?.detail) return [];
 
-      // Filter relevant groups
       const relevantItems = itemsData.detail.filter((item: any) => {
         const gName = (item.groupName || '').toUpperCase();
         const iType = (item.itemType || '');
@@ -212,8 +178,7 @@ export const fetchAggregatedRankings = async (
         return matchesGroup && matchesType;
       });
 
-      // B. Get Rankings for each relevant group (Concurrent inner)
-      // Usually there are only 1-3 relevant groups per game, so Promise.all is safe here
+      // B. Get Rankings
       await Promise.all(relevantItems.map(async (item: any) => {
         try {
           const rankUrl = 'https://race.ymq.me/webservice/appWxRank/showRankScore.do';
@@ -222,7 +187,7 @@ export const fetchAggregatedRankings = async (
             headers: getHeaders(config, 'https://apply.ymq.me/'),
             body: JSON.stringify({
               body: { raceId: game.id, groupId: null, itemId: item.id },
-              header: { token: config.token, snTime: config.snTime, sn: config.sn, from: "wx" }
+              header: { token: config.token, snTime: Date.now(), sn: config.sn, from: "wx" }
             })
           });
           const rankData = await rankRes.json();
@@ -240,9 +205,7 @@ export const fetchAggregatedRankings = async (
               });
             });
           }
-        } catch (innerE) {
-           // ignore specific group fetch error
-        }
+        } catch (innerE) {}
       }));
 
     } catch (e) {
@@ -251,11 +214,10 @@ export const fetchAggregatedRankings = async (
     return ranksInGame;
   });
   
-  // Flatten array
   return results.flat();
 };
 
-// 3. Fetch Matches (OPTIMIZED: Concurrent Batches)
+// 3. Fetch Matches
 export const fetchPlayerMatches = async (
   config: ApiHeaderConfig,
   playerName: string,
@@ -267,13 +229,14 @@ export const fetchPlayerMatches = async (
   const results = await runInBatches(games, 8, async (game, index) => {
     const matchesInGame: MatchScoreResult[] = [];
     
-    // Update UI less frequently
     if (index % 3 === 0) {
        processedCount = index;
        onProgress(`正在全网检索: ${game.game_name}`, Math.floor((processedCount / games.length) * 100));
     }
 
-    const url = `https://race.ymq.me/webservice/appWxMatch/matchesScore.do?t=${config.snTime || Date.now()}`;
+    // Use current time
+    const effectiveSnTime = Date.now();
+    const url = `https://race.ymq.me/webservice/appWxMatch/matchesScore.do?t=${effectiveSnTime}`;
     
     try {
       const res = await fetch(url, {
@@ -284,9 +247,9 @@ export const fetchPlayerMatches = async (
             raceId: game.id,
             page: 1,
             rows: 50, 
-            keyword: playerName // Filtering by name on server side
+            keyword: playerName
           },
-          header: { token: config.token, snTime: config.snTime, sn: config.sn, from: "wx" }
+          header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "wx" }
         })
       });
 
@@ -349,7 +312,6 @@ export const fetchPlayerMatches = async (
   return results.flat();
 };
 
-// MOCK DATA
 export const getMockRanks = (): PlayerRank[] => {
   return Array.from({ length: 15 }).map((_, i) => ({
     raceId: `mock-${i}`,

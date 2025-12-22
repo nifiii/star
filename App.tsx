@@ -4,7 +4,7 @@ import ConfigPanel from './components/ConfigPanel';
 import LogViewer from './components/LogViewer';
 import { fetchGameList, fetchAggregatedRankings, fetchPlayerMatches, getMockRanks, getMockMatches } from './services/huaTiHuiService';
 import { analyzeData } from './services/geminiService';
-import { Download, ArrowLeft, Trophy, FileText, BarChart2, Sparkles, X, Medal, Smile, Frown, Lightbulb, Target, TrendingUp } from 'lucide-react';
+import { Download, ArrowLeft, Trophy, BarChart2, Sparkles, X, Medal, Smile, Frown, Lightbulb } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ReactMarkdown from 'react-markdown';
 
@@ -40,7 +40,6 @@ const App: React.FC = () => {
   const [config, setConfig] = useState<ApiHeaderConfig>(INITIAL_CONFIG);
   const [userCredentials, setUserCredentials] = useState<UserCredentials>(INITIAL_CREDENTIALS);
   const [searchConfig, setSearchConfig] = useState<SearchConfig>(INITIAL_SEARCH_CONFIG);
-  const [isAutoTime, setIsAutoTime] = useState(true);
   
   const [view, setView] = useState<AppView>('DASHBOARD_RANKS');
   const [status, setStatus] = useState<StepStatus>(StepStatus.IDLE);
@@ -80,7 +79,7 @@ const App: React.FC = () => {
               ...prev,
               token: autoData.token,
               sn: autoData.sn || prev.sn,
-              snTime: autoData.snTime || Date.now()
+              snTime: Date.now() // Frontend always uses current time
             }));
             setUserCredentials(prev => ({
               ...prev,
@@ -97,7 +96,7 @@ const App: React.FC = () => {
             }
         }
       } else {
-         if (isManual) addLog("⚠️ 未找到配置文件 (404)。浏览器无法自动执行脚本，请在终端手动运行: npm run get-token", "error");
+         if (isManual) addLog("⚠️ 未找到配置文件 (404)。请运行: npm run get-token", "error");
       }
     } catch (e) {
       if (isManual) addLog("⚠️ 读取配置失败，请重试。", "error");
@@ -252,18 +251,16 @@ const App: React.FC = () => {
       return;
     }
 
-    if (isAutoTime) updateConfig('snTime', Date.now());
-
     try {
       addLog("🔎 正在扫描城市赛事列表...", "info");
       const games = await fetchGameList(
-        { ...config, snTime: isAutoTime ? Date.now() : config.snTime },
+        config, // Service handles snTime automatically now
         searchConfig
       );
       
       if (games.length === 0) {
         addLog("❌ 未找到赛事，请检查Token是否有效，或更改城市/年份。", "error");
-        setHasAuthError(true); // Assuming empty list might be token issue if defaults used
+        setHasAuthError(true); 
         setStatus(StepStatus.ERROR);
         return;
       }
@@ -271,7 +268,7 @@ const App: React.FC = () => {
       addLog(`✅ 锁定 ${games.length} 个相关赛事! 开始抓取排名...`, "success");
 
       const ranks = await fetchAggregatedRankings(
-        { ...config, snTime: isAutoTime ? Date.now() : config.snTime },
+        config,
         searchConfig,
         games,
         (msg, prog) => setProgress(prog)
@@ -301,7 +298,6 @@ const App: React.FC = () => {
       return;
     }
 
-    // Safety: targetName is string here
     const safePlayerName = targetName as string;
 
     // CHECK CACHE
@@ -328,8 +324,6 @@ const App: React.FC = () => {
       }, 500);
       return;
     }
-
-    if (isAutoTime) updateConfig('snTime', Date.now());
     
     try {
        addLog(`🔍 启动全网搜人引擎: ${safePlayerName}`, "info");
@@ -337,17 +331,14 @@ const App: React.FC = () => {
        let games = cachedGames;
        if (games.length === 0) {
          addLog("正在获取赛事范围...", "info");
-         games = await fetchGameList(
-          { ...config, snTime: isAutoTime ? Date.now() : config.snTime },
-          searchConfig
-        );
-        setCachedGames(games);
+         games = await fetchGameList(config, searchConfig);
+         setCachedGames(games);
        }
        
        addLog(`📚 正在 ${games.length} 场赛事中翻阅记录...`, "info");
 
        const matches = await fetchPlayerMatches(
-        { ...config, snTime: isAutoTime ? Date.now() : config.snTime },
+        config,
         safePlayerName,
         games,
         (msg, prog) => setProgress(prog)
@@ -392,15 +383,12 @@ const App: React.FC = () => {
 
     try {
       if (cachedGames.length === 0) {
-        const games = await fetchGameList(
-          { ...config, snTime: isAutoTime ? Date.now() : config.snTime },
-          searchConfig
-        );
+        const games = await fetchGameList(config, searchConfig);
         setCachedGames(games);
       }
 
       const matches = await fetchPlayerMatches(
-        { ...config, snTime: isAutoTime ? Date.now() : config.snTime },
+        config,
         playerName,
         cachedGames,
         (msg, prog) => setProgress(prog)
@@ -538,8 +526,6 @@ const App: React.FC = () => {
             onConfigChange={updateConfig} 
             onSearchConfigChange={updateSearchConfig}
             onClearCache={clearCurrentCache}
-            isAutoTime={isAutoTime} 
-            setIsAutoTime={setIsAutoTime}
             onScanRankings={handleFetchRankings}
             onDirectSearch={handleDirectPlayerSearch}
             onDemo={handleDemo}

@@ -12,8 +12,6 @@ interface Props {
   onConfigChange: (key: keyof ApiHeaderConfig, value: any) => void;
   onSearchConfigChange: (key: keyof SearchConfig, value: any) => void;
   onClearCache: () => void;
-  isAutoTime: boolean;
-  setIsAutoTime: (val: boolean) => void;
   // Actions passed from parent
   onScanRankings: () => void;
   onDirectSearch: () => void;

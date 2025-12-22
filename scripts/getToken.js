@@ -1,180 +1,157 @@
-import puppeteer from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-// 解决 ES Module 中 __dirname 不可用的问题
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, '../public');
 const outputPath = path.resolve(publicDir, 'auth_config.json');
 
-// 您的账号信息
+// 用户配置
 const CREDENTIALS = {
   username: process.env.HTH_USER || '13261316191',
   password: process.env.HTH_PASS || 'Gao@2018.com'
 };
 
-const HOME_PAGE = 'https://sports.ymq.me/mobile/home';
-const LOGIN_PAGE_CHECK = 'https://sports.ymq.me/mobile/login'; // 某些情况下的登录页
+// 1. 登录专用固定配置 (来自您的 CURL)
+// 这个 Token 和 SN 是用于 "握手" 登录的，似乎是客户端的硬编码值
+const LOGIN_HANDSHAKE_HEADERS = {
+    token: "DLFFG4-892b3448b953b5da525470ec2e5147d1202a126c",
+    sn: "2b3467f4850c6743673871aa6c281f6a",
+    from: "web"
+};
 
-async function debugLogin() {
-  console.log(`\n[${new Date().toLocaleTimeString()}] 🕵️‍♂️ 开始登录流程深度调试...`);
-  console.log(`👤 尝试登录账号: ${CREDENTIALS.username}`);
-  
-  const browser = await puppeteer.launch({
-    headless: "new",
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-  });
+// 2. 数据查询专用固定 SN (来自您的 Rank 接口 CURL)
+// 登录成功后，我们将把这个 SN 写入配置文件供前端使用
+const DATA_QUERY_SN = "9cc07cfedc454229063eb32c3045c5ae"; 
+
+async function loginAndSave() {
+  console.log(`\n==================================================`);
+  console.log(`[${new Date().toLocaleTimeString()}] 🚀 开始直接调用登录接口...`);
+  console.log(`👤 用户名: ${CREDENTIALS.username}`);
+  console.log(`==================================================`);
+
+  const loginUrl = `https://user.ymq.me/public/public/login?t=${Date.now()}`;
+  const requestTime = Date.now();
+
+  // 构造登录 Payload
+  const payload = {
+      body: {
+          identifier: CREDENTIALS.username,
+          credential: CREDENTIALS.password,
+          client_id: 1000,
+          identity_type: 1
+      },
+      header: {
+          token: LOGIN_HANDSHAKE_HEADERS.token,
+          sn: LOGIN_HANDSHAKE_HEADERS.sn,
+          snTime: requestTime,
+          from: LOGIN_HANDSHAKE_HEADERS.from
+      }
+  };
+
+  // 打印请求日志 (隐藏密码)
+  const logPayload = JSON.parse(JSON.stringify(payload));
+  logPayload.body.credential = "******";
+  console.log('📤 发送请求 Payload:', JSON.stringify(logPayload, null, 2));
 
   try {
-    const page = await browser.newPage();
-    // 模拟 iPhone X 这里的 UserAgent 和 Viewport 很重要，防止被识别为爬虫
-    await page.setViewport({ width: 375, height: 812, isMobile: true, hasTouch: true });
-    await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1');
+      const response = await fetch(loginUrl, {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json',
+              'Origin': 'https://sports.ymq.me',
+              'Referer': 'https://sports.ymq.me/',
+              'User-Agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36'
+          },
+          body: JSON.stringify(payload)
+      });
 
-    // =================================================================
-    // 1. 监听网络层：专门抓取 Login 接口的请求和响应
-    // =================================================================
-    await page.setRequestInterception(true);
-    
-    page.on('request', request => {
-        const url = request.url();
-        // 忽略静态资源，减少噪音
-        if (['image', 'stylesheet', 'font'].includes(request.resourceType())) {
-            request.continue();
-            return;
-        }
+      const data = await response.json();
 
-        // 重点监听 login 接口
-        if (url.includes('/login') && request.method() === 'POST') {
-            console.log('\n🔵 [发起登录请求] URL:', url);
-            console.log('   📦 请求参数 (Post Data):', request.postData());
-        }
+      console.log(`\n📥 收到响应 (Status: ${response.status}):`);
+      console.log(JSON.stringify(data, null, 2));
 
-        request.continue();
-    });
+      if (data.code === 1 && data.userinfo && data.userinfo.token) {
+          console.log('\n✅ 登录成功!');
+          
+          const newToken = data.userinfo.token;
+          console.log(`\n🔑 ---------------- TOKEN ----------------`);
+          console.log(newToken);
+          console.log(`------------------------------------------\n`);
 
-    page.on('response', async response => {
-        const url = response.url();
-        
-        // 重点监听 login 接口的返回
-        if (url.includes('/login') && response.request().method() === 'POST') {
-            console.log('\n🟢 [登录接口返回] Status:', response.status());
-            try {
-                const json = await response.json();
-                console.log('   📦 返回数据 (JSON):');
-                console.log(JSON.stringify(json, null, 2));
-                
-                if (json.code === '200' || json.success === true || (json.header && json.header.token)) {
-                    console.log('   ✅ 接口判定：登录成功！');
-                } else {
-                    console.log('   ❌ 接口判定：登录可能失败 (请检查 msg 字段)');
-                }
-            } catch (e) {
-                console.log('   ⚠️ 无法解析返回 JSON:', await response.text());
-            }
-        }
-    });
+          // 构造保存的数据
+          // 注意：这里保存的 SN 是用于后续数据查询的 DATA_QUERY_SN
+          const configData = {
+              token: newToken,
+              sn: DATA_QUERY_SN, 
+              snTime: Date.now(), // 记录获取时间，虽然前端请求会用最新的
+              username: data.userinfo.nickname || CREDENTIALS.username,
+              updatedAt: new Date().toLocaleString(),
+              status: "active"
+          };
 
-    // =================================================================
-    // 2. 模拟用户操作流程
-    // =================================================================
-    
-    console.log(`\n🔗 [1/4] 前往首页: ${HOME_PAGE}`);
-    await page.goto(HOME_PAGE, { waitUntil: 'networkidle2', timeout: 30000 });
-    
-    // 打印当前页面状态
-    let title = await page.title();
-    console.log(`   当前页面标题: "${title}"`);
+          // 确保目录存在
+          if (!fs.existsSync(publicDir)){
+              fs.mkdirSync(publicDir, { recursive: true });
+          }
 
-    // 检查是否在登录页，或者有密码框
-    const passwordInput = await page.$('input[type="password"]');
+          fs.writeFileSync(outputPath, JSON.stringify(configData, null, 2));
+          console.log(`💾 凭证已保存至: ${outputPath}`);
 
-    if (passwordInput) {
-        console.log('\n⌨️ [2/4] 发现登录表单，正在输入账号密码...');
-        
-        // 查找所有输入框
-        const inputs = await page.$$('input:not([type="hidden"])');
-        
-        // 输入用户名 (通常是第一个可见输入框)
-        if (inputs.length > 0) {
-            await inputs[0].click({ clickCount: 3 });
-            await inputs[0].type(CREDENTIALS.username, { delay: 100 });
-        }
-        
-        // 输入密码
-        await passwordInput.click({ clickCount: 3 });
-        await passwordInput.type(CREDENTIALS.password, { delay: 100 });
+          // 验证一下
+          await verifyToken(configData);
 
-        // 点击登录按钮
-        console.log('🖱️ [3/4] 点击登录按钮...');
-        
-        // 尝试多种方式定位登录按钮
-        const loginBtn = await page.evaluateHandle(() => {
-            // 策略：找内容包含“登录”的按钮或div
-            const allDivs = Array.from(document.querySelectorAll('button, div, span'));
-            return allDivs.find(el => el.innerText.trim() === '登录' && el.offsetParent !== null);
-        });
-
-        if (loginBtn && loginBtn.asElement()) {
-            await loginBtn.asElement().click();
-        } else {
-            console.log('   ⚠️ 未找到明确的“登录”按钮，尝试按回车键提交...');
-            await passwordInput.press('Enter');
-        }
-
-        // 等待页面跳转或接口返回
-        console.log('⏳ 等待跳转 (5秒)...');
-        await new Promise(r => setTimeout(r, 5000));
-
-    } else {
-        console.log('✅ 未发现密码框，推测 Cookie 有效，已经是登录状态。');
-    }
-
-    // =================================================================
-    // 3. 验证登录结果 (关键步骤)
-    // =================================================================
-    console.log('\n📸 [4/4] 登录后状态检查:');
-    
-    const finalUrl = page.url();
-    const finalTitle = await page.title();
-    console.log(`   📍 当前 URL: ${finalUrl}`);
-    console.log(`   📍 当前 Title: ${finalTitle}`);
-
-    // 打印页面可见文本，这是确认是否登录最直观的方法
-    // 如果登录成功，通常会看到“赛事列表”、“我的”、“积分”等词汇
-    // 如果失败，可能会看到“请输入账号”、“密码错误”等
-    const pageText = await page.evaluate(() => {
-        return document.body.innerText
-            .replace(/\s+/g, ' ') // 压缩空格
-            .substring(0, 300);   // 只取前300字
-    });
-    
-    console.log('   👀 页面可见文字预览:');
-    console.log(`   "${pageText}..."`);
-
-    // 尝试跳转到个人中心做二次确认
-    if (!finalUrl.includes('mine')) {
-        console.log('\n➡️ 尝试跳转到个人中心 (mobile/mine) 做最终确认...');
-        await page.goto('https://sports.ymq.me/mobile/mine', { waitUntil: 'networkidle2' });
-        const mineText = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').substring(0, 300));
-        console.log(`   👀 个人中心文字预览: "${mineText}..."`);
-        
-        if (mineText.includes(CREDENTIALS.username) || mineText.includes('设置') || mineText.includes('退出')) {
-             console.log('\n🎉🎉🎉 结论：登录成功！(在页面上找到了个人信息)');
-        } else {
-             console.log('\n⚠️⚠️⚠️ 结论：登录状态存疑，未在个人中心找到典型关键词。');
-        }
-    }
+      } else {
+          console.error('❌ 登录失败。API 返回错误代码或缺少 Token。');
+      }
 
   } catch (error) {
-    console.error('❌ 调试过程出错:', error);
-  } finally {
-    if (browser) await browser.close();
-    console.log('\n🏁 调试结束。请分析上方日志中的 [登录接口返回] 和 [页面可见文字预览]。');
+      console.error('❌ 请求出错:', error);
   }
 }
 
-// 运行调试
-debugLogin();
+async function verifyToken(config) {
+    console.log('\n🧪 验证 Token 有效性 (获取赛事列表)...');
+    try {
+        const verifyUrl = `https://applyv3.ymq.me/public/public/getgamefulllist?t=${Date.now()}`;
+        const res = await fetch(verifyUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Origin': 'https://sports.ymq.me',
+                'Referer': 'https://sports.ymq.me/'
+            },
+            body: JSON.stringify({
+                body: { 
+                    page_num: 1, 
+                    page_size: 1, 
+                    statuss: [10], 
+                    province: ["广东省"] 
+                },
+                header: { 
+                    token: config.token, 
+                    sn: config.sn, 
+                    snTime: Date.now(), // 验证时也使用当前时间
+                    from: "web" 
+                } 
+            })
+        });
+        const json = await res.json();
+        console.log('📦 验证响应:', JSON.stringify(json).substring(0, 200) + (JSON.stringify(json).length > 200 ? '...' : ''));
+        
+        if (json?.data?.list) {
+            console.log('✅ Token 有效，数据获取正常。');
+        } else {
+            console.warn('⚠️ Token 似乎有效但未返回列表数据，请检查。');
+        }
+    } catch (e) {
+        console.error('❌ 验证过程出错', e);
+    }
+}
+
+// 立即执行
+loginAndSave();
+
+// 如果是在 Docker 或长期运行环境中，可以取消下面的注释开启定时刷新
+// setInterval(loginAndSave, 2 * 60 * 60 * 1000); // 2小时刷新一次

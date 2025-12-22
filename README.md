@@ -14,14 +14,14 @@
     *   **赛区观察**：AI 自动分析赛区竞争格局，发现潜力新星。
     *   **个人报告**：AI 教练针对选手历史数据，评估胜率、稳定性，并给出改进建议。
 *   **📊 数据导出**：支持将排行榜和个人战绩导出为 Excel 表格。
-*   **🤖 自动凭证管理**：内置自动化脚本，后台持续更新华体汇 Token，前端无感连接。
+*   **🤖 高效凭证管理**：内置轻量级 Node.js 脚本，直接模拟 API 请求（替代了旧版笨重的浏览器模拟），毫秒级获取 Token。
 
 ## 🛠️ 技术栈
 
 *   **前端框架**: React 19, Vite
 *   **UI 样式**: Tailwind CSS (自定义主题)
 *   **AI 引擎**: Google Gemini API (`@google/genai`)
-*   **自动化**: Puppeteer (用于后台获取 Token)
+*   **后端脚本**: Node.js (Native Fetch)
 *   **部署**: Docker (Nginx + Node.js 混合镜像)
 
 ---
@@ -29,6 +29,8 @@
 ## 🚀 宿主机部署指南 (Production Deployment)
 
 本项目的 Docker 镜像采用 **All-in-One** 设计，同一个容器内运行 Nginx（提供网页服务）和 Node.js 脚本（提供 Token 更新）。
+
+由于移除了 Puppeteer，镜像体积非常小，且构建速度极快。
 
 ### 1. 准备环境 (Prerequisites)
 
@@ -87,7 +89,7 @@ docker run -d \
 docker logs -f my-hth-dashboard
 ```
 
-你应该能看到类似 `🚀 启动自动登录任务...` 和 `⚡ 捕获到 Token!` 的日志。
+你应该能看到类似 `🚀 开始直接调用登录接口...` 和 `✅ 登录成功!` 的日志。
 
 **更新部署：**
 
@@ -113,11 +115,13 @@ docker run -d --name my-hth-dashboard --restart always -p 80:80 -e HTH_USER="xxx
 npm install
 ```
 
-### 2. 获取华体汇 Token (后台)
+### 2. 获取华体汇 Token (Token 生成器)
 
-开启一个终端窗口运行脚本：
+虽然我们改用了 API 接口方式（不再启动浏览器），但仍需运行此命令。
+该脚本会模拟 Curl 请求获取 Token 并保存到本地文件，供前端页面读取。
 
 ```bash
+# 这将运行 scripts/getToken.js (轻量级 API 客户端)
 npm run get-token
 ```
 

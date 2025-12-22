@@ -1,6 +1,6 @@
 {
   "name": "huatihui-data-insight",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Badminton match data dashboard with AI analysis",
   "type": "module",
   "author": "Your Name <your.email@example.com>",
@@ -28,7 +28,6 @@
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.3",
     "typescript": "^5.4.5",
-    "vite": "^5.2.10",
-    "puppeteer": "^22.0.0"
+    "vite": "^5.2.10"
   }
 }
