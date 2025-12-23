@@ -11,8 +11,22 @@ const setupProxyInterceptor = () => {
     if ((window as any)._geminiProxyInstalled) return;
 
     const originalFetch = window.fetch;
+    
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-        let urlStr = typeof input === 'string' ? input : input.toString();
+        let urlStr: string;
+        let originalRequest: Request | null = null;
+
+        // 1. Extract URL string regardless of input type
+        if (typeof input === 'string') {
+            urlStr = input;
+        } else if (input instanceof URL) {
+            urlStr = input.toString();
+        } else if (input instanceof Request) {
+            urlStr = input.url;
+            originalRequest = input;
+        } else {
+            urlStr = String(input);
+        }
         
         // Target Domain to intercept
         const targetDomain = 'generativelanguage.googleapis.com';
@@ -21,12 +35,23 @@ const setupProxyInterceptor = () => {
             // Replace the Google domain with our local proxy path
             // e.g. https://generativelanguage.googleapis.com/v1beta/... 
             // becomes /google-ai/v1beta/...
-            // Nginx will then strip /google-ai/ and forward to Google.
             const proxyBase = `${window.location.origin}/google-ai`;
-            const newUrl = urlStr.replace(`https://${targetDomain}`, proxyBase);
+            const newUrlStr = urlStr.replace(`https://${targetDomain}`, proxyBase);
             
-            // console.debug(`[Proxy] Redirecting: ${urlStr} -> ${newUrl}`);
-            return originalFetch(newUrl, init);
+            // console.debug(`[Proxy] Redirecting: ${urlStr} -> ${newUrlStr}`);
+
+            // If input was a Request object, we must create a new Request with the new URL
+            // because Request.url is read-only.
+            if (originalRequest) {
+                // Clone the request but override the URL
+                // We pass 'init' to override headers/method if provided in the fetch call, 
+                // but usually for Request objects, the body/headers are in the object itself.
+                // However, creating a new Request(newUrl, originalRequest) copies settings.
+                const newReq = new Request(newUrlStr, originalRequest);
+                return originalFetch(newReq, init);
+            }
+            
+            return originalFetch(newUrlStr, init);
         }
         
         return originalFetch(input, init);
@@ -64,8 +89,6 @@ export const analyzeData = async (
 
   try {
     // 初始化 SDK
-    // 由于我们已经 patch 了 window.fetch，这里不需要 (也可能不支持) 传递 baseUrl
-    // SDK 会尝试连接 generativelanguage.googleapis.com，然后被拦截器重定向到 /google-ai
     const ai = new GoogleGenAI({ 
       apiKey: apiKey
     });
@@ -107,7 +130,6 @@ export const analyzeData = async (
 
     if (!response || !response.text) {
         log(`⚠️ 响应内容为空或格式异常。`, 'error');
-        // log raw response object is not possible via string-only logger, but we can log keys
         log(`Response Keys: ${Object.keys(response || {}).join(', ')}`, 'error');
     } else {
         log(`✅ 分析成功! (耗时: ${duration}ms)`, 'success');
@@ -119,13 +141,16 @@ export const analyzeData = async (
     log(`❌ Gemini API 请求失败:`, 'error');
     
     if (error instanceof Error) {
-        log(`Type: ${error.name}`, 'error');
-        log(`Message: ${error.message}`, 'error');
+        // Handle specific fetch errors (like 404 HTML response being parsed as JSON fail)
+        if (error.message.includes('Unexpected token') || error.message.includes('<')) {
+             log(`Message: 代理服务返回了非 JSON 格式 (可能是 404/502 错误页)。`, 'error');
+        } else {
+             log(`Message: ${error.message}`, 'error');
+        }
     } else {
         log(`Unknown error: ${JSON.stringify(error)}`, 'error');
     }
 
-    // Check for common fetch errors or API specific errors
     if (error.message?.includes('401') || error.message?.includes('403')) {
         log("💡 提示: 权限被拒绝，请检查 API Key 是否有效。", 'error');
     }

@@ -16,51 +16,53 @@ server {
     }
 
     # 2. 鉴权配置：auth_config.json 不缓存
-    # Token 可能会随时刷新，前端必须获取最新
     location = /auth_config.json {
         add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
         expires off;
     }
 
-    # 3. 每日榜单数据：daily_rankings.json 缓存 1 小时
+    # 3. 每日榜单数据缓存
     location = /daily_rankings.json {
         add_header Cache-Control "public, max-age=3600";
         expires 1h;
     }
 
-    # 4. 每日比分数据：daily_matches.json 缓存 1 小时
+    # 4. 每日比分数据缓存
     location = /daily_matches.json {
         add_header Cache-Control "public, max-age=3600";
         expires 1h;
     }
 
-    # 5. 静态资源缓存配置 (js, css, images)
-    # Vite 生成的文件带有 hash 文件名，可以长时间缓存
+    # 5. 静态资源缓存配置
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
         expires 1y;
         add_header Cache-Control "public, no-transform";
     }
 
     # 6. Google Gemini AI Proxy
-    # 代理 /google-ai/ 开头的请求到 Google API，解决国内客户端无法直连的问题
-    # 前端请求: /google-ai/v1beta/models/... -> Nginx -> https://generativelanguage.googleapis.com/v1beta/models/...
-    location /google-ai/ {
-        # 注意: proxy_pass 结尾带 / 会自动剔除 location 匹配的路径部分
-        proxy_pass https://generativelanguage.googleapis.com/;
+    # 代理 /google-ai/ 开头的请求到 Google API
+    # 使用 ^~ 提高优先级，防止被其他正则匹配
+    location ^~ /google-ai/ {
+        # 使用 Docker 默认 DNS 解析器 (防止 Nginx 启动时无法解析域名或 IP 变动)
+        resolver 127.0.0.11 ipv6=off;
+
+        # 移除 /google-ai/ 前缀，提取剩余路径
+        rewrite ^/google-ai/(.*) /$1 break;
         
-        # Google API 强制要求 SNI，必须开启 proxy_ssl_server_name
+        # 代理到 Google API
+        proxy_pass https://generativelanguage.googleapis.com;
+        
+        # SSL 和 Host 配置
         proxy_ssl_server_name on;
         proxy_ssl_name generativelanguage.googleapis.com;
-        
-        # 伪装 Host 头
         proxy_set_header Host generativelanguage.googleapis.com;
         
-        # 禁用缓存和缓冲，确保流式(Streaming)响应流畅
+        # 禁用缓存和缓冲，确保流式响应流畅
         proxy_buffering off;
         proxy_cache off;
         chunked_transfer_encoding on;
         
-        # 增加超时时间，防止 AI 思考时间过长导致 Nginx 断开连接 (设置为 300秒)
+        # 超时设置 (300秒)
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
     }
