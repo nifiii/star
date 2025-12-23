@@ -118,7 +118,7 @@ docker run -d \
   --name my-hth-dashboard \
   --restart always \
   -p 80:80 \
-  -v $(pwd)/hth-data:/app/data \
+  -v /usr/local/hth-data:/app/data \
   -e HTH_USER="13800138000" \
   -e HTH_PASS="YourPassword123" \
   -e TZ="Asia/Shanghai" \
