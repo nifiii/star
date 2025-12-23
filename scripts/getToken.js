@@ -167,9 +167,19 @@ async function fetchGameList() {
         
         if (json && json.data && Array.isArray(json.data.list)) {
             const list = json.data.list;
-            // 打印第一条数据的日期，用于调试
+            
             if (list.length > 0) {
-                console.log(`   API 首条数据日期: ${list[0].start_date} | 名称: ${list[0].game_name}`);
+                const sampleGame = list[0];
+                let debugDate = '未知';
+                
+                // 优化日志调试信息，确保能看到有效日期
+                if (sampleGame.end_game_time) {
+                    debugDate = new Date(sampleGame.end_game_time * 1000).toLocaleDateString();
+                } else if (sampleGame.start_date) {
+                    debugDate = sampleGame.start_date;
+                }
+                
+                console.log(`   API 首条数据日期: ${debugDate} | 名称: ${sampleGame.game_name}`);
             }
 
             console.log(`   API 返回 ${list.length} 个广州赛事。正在筛选近一年数据...`);
@@ -177,8 +187,18 @@ async function fetchGameList() {
             const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
             
             const recentGames = list.filter(g => {
-                const gameDate = new Date(g.start_date).getTime();
-                return gameDate > oneYearAgo;
+                // 优先使用 end_game_time (秒级时间戳)
+                if (g.end_game_time) {
+                    const gameTime = g.end_game_time * 1000;
+                    return gameTime > oneYearAgo;
+                }
+                // 兼容旧字段 start_date (字符串)
+                if (g.start_date) {
+                    const gameDate = new Date(g.start_date).getTime();
+                    return gameDate > oneYearAgo;
+                }
+                // 如果没有时间信息，则默认视为不满足条件
+                return false;
             });
 
             console.log(`✅ 筛选出 ${recentGames.length} 场近期已结束赛事。`);

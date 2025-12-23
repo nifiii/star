@@ -120,7 +120,8 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
         .map((game: any) => ({
           id: game.id,
           game_name: game.game_name,
-          start_date: game.start_date
+          // Fallback to end_game_time if start_date is null/empty
+          start_date: game.start_date || (game.end_game_time ? new Date(game.end_game_time * 1000).toLocaleDateString() : '未知日期')
         }));
     }
     return [];

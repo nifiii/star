@@ -3,11 +3,45 @@ import { GoogleGenAI } from "@google/genai";
 type LogType = 'info' | 'success' | 'error';
 type Logger = (message: string, type?: LogType) => void;
 
+// --- Global Fetch Interceptor Setup ---
+// The SDK might not support 'baseUrl' in all versions/configurations.
+// We patch window.fetch to ensure requests to Google's API are redirected 
+// to our local Nginx proxy (/google-ai), which handles the VPN/Connection.
+const setupProxyInterceptor = () => {
+    if ((window as any)._geminiProxyInstalled) return;
+
+    const originalFetch = window.fetch;
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        let urlStr = typeof input === 'string' ? input : input.toString();
+        
+        // Target Domain to intercept
+        const targetDomain = 'generativelanguage.googleapis.com';
+        
+        if (urlStr.includes(targetDomain)) {
+            // Replace the Google domain with our local proxy path
+            // e.g. https://generativelanguage.googleapis.com/v1beta/... 
+            // becomes /google-ai/v1beta/...
+            // Nginx will then strip /google-ai/ and forward to Google.
+            const proxyBase = `${window.location.origin}/google-ai`;
+            const newUrl = urlStr.replace(`https://${targetDomain}`, proxyBase);
+            
+            // console.debug(`[Proxy] Redirecting: ${urlStr} -> ${newUrl}`);
+            return originalFetch(newUrl, init);
+        }
+        
+        return originalFetch(input, init);
+    };
+    (window as any)._geminiProxyInstalled = true;
+};
+
 export const analyzeData = async (
   data: any[], 
   customPrompt?: string,
   onLog?: Logger
 ): Promise<string> => {
+  // Ensure proxy is active before making any calls
+  setupProxyInterceptor();
+
   // Helper to trigger log callback if provided
   const log = (msg: string, type: LogType = 'info') => {
     if (onLog) onLog(msg, type);
@@ -29,13 +63,12 @@ export const analyzeData = async (
   log(`🔑 API Key 状态: 已加载 (${maskedKey})`, 'info');
 
   try {
-    // 使用 Nginx 代理路径初始化 SDK
-    // 这样前端浏览器会请求: https://<your-domain>/google-ai/v1beta/...
-    // 而不是直接连接 generativelanguage.googleapis.com (可能被墙)
+    // 初始化 SDK
+    // 由于我们已经 patch 了 window.fetch，这里不需要 (也可能不支持) 传递 baseUrl
+    // SDK 会尝试连接 generativelanguage.googleapis.com，然后被拦截器重定向到 /google-ai
     const ai = new GoogleGenAI({ 
-      apiKey: apiKey,
-      baseUrl: `${window.location.origin}/google-ai`
-    } as any);
+      apiKey: apiKey
+    });
     
     // Prepare data summary to avoid token limits if list is huge
     // 50 items is usually enough for a statistical sample
@@ -56,9 +89,10 @@ export const analyzeData = async (
     `;
 
     const prompt = customPrompt || defaultPrompt;
+    // 使用用户验证过的模型 (Gemini 3 Flash Preview)
     const modelId = 'gemini-3-flash-preview';
 
-    log(`🧠 调用模型: ${modelId} (Via Proxy)`, 'info');
+    log(`🧠 调用模型: ${modelId} (Via Nginx Proxy)`, 'info');
     log(`⏳ 请求已发送，等待响应...`, 'info');
 
     const startTime = Date.now();
@@ -96,7 +130,7 @@ export const analyzeData = async (
         log("💡 提示: 权限被拒绝，请检查 API Key 是否有效。", 'error');
     }
     if (error.message?.includes('Failed to fetch')) {
-         log("💡 提示: 网络错误。可能需要检查 Nginx 代理配置。", 'error');
+         log("💡 提示: 网络连接失败。请检查 Nginx 代理是否正常运行。", 'error');
     }
 
     return `分析失败。\n错误信息: ${error.message}`;
