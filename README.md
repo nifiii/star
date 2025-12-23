@@ -113,7 +113,7 @@ docker build \
 # 1. 创建本地数据目录（可选，用于方便查看数据）
 mkdir -p /usr/local/hth-data
 
-# 2. 启动容器
+# 2. 启动服务容器
 docker run -d \
   --name my-hth-dashboard \
   --restart always \
