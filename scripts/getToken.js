@@ -144,9 +144,11 @@ async function fetchGameList() {
     const url = `https://applyv3.ymq.me/public/public/getgamefulllist?t=${Date.now()}`;
     
     // 严格限制：广东省 广州市
+    // 新增 sports_id: 1 (羽毛球), 修复数据获取为空的问题
     const requestBody = {
         page_num: 1,
         page_size: 100,
+        sports_id: 1,  
         statuss: [10], // 已结束
         province: ["广东省"],
         city: ["广州市"] 
@@ -165,6 +167,11 @@ async function fetchGameList() {
         
         if (json && json.data && Array.isArray(json.data.list)) {
             const list = json.data.list;
+            // 打印第一条数据的日期，用于调试
+            if (list.length > 0) {
+                console.log(`   API 首条数据日期: ${list[0].start_date} | 名称: ${list[0].game_name}`);
+            }
+
             console.log(`   API 返回 ${list.length} 个广州赛事。正在筛选近一年数据...`);
 
             const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
