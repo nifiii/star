@@ -29,7 +29,13 @@ export const analyzeData = async (
   log(`🔑 API Key 状态: 已加载 (${maskedKey})`, 'info');
 
   try {
-    const ai = new GoogleGenAI({ apiKey: apiKey });
+    // 使用 Nginx 代理路径初始化 SDK
+    // 这样前端浏览器会请求: https://<your-domain>/google-ai/v1beta/...
+    // 而不是直接连接 generativelanguage.googleapis.com (可能被墙)
+    const ai = new GoogleGenAI({ 
+      apiKey: apiKey,
+      baseUrl: `${window.location.origin}/google-ai`
+    } as any);
     
     // Prepare data summary to avoid token limits if list is huge
     // 50 items is usually enough for a statistical sample
@@ -52,7 +58,7 @@ export const analyzeData = async (
     const prompt = customPrompt || defaultPrompt;
     const modelId = 'gemini-3-flash-preview';
 
-    log(`🧠 调用模型: ${modelId}`, 'info');
+    log(`🧠 调用模型: ${modelId} (Via Proxy)`, 'info');
     log(`⏳ 请求已发送，等待响应...`, 'info');
 
     const startTime = Date.now();
@@ -90,7 +96,7 @@ export const analyzeData = async (
         log("💡 提示: 权限被拒绝，请检查 API Key 是否有效。", 'error');
     }
     if (error.message?.includes('Failed to fetch')) {
-         log("💡 提示: 网络错误。可能需要代理/VPN。", 'error');
+         log("💡 提示: 网络错误。可能需要检查 Nginx 代理配置。", 'error');
     }
 
     return `分析失败。\n错误信息: ${error.message}`;
