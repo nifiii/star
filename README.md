@@ -10,7 +10,8 @@
 
 ### 🚀 极速体验 (Performance)
 *   **双重增量引擎**: 采用 **Server-Side Incremental Scraper** 技术。后台脚本智能分离“赛事排名”与“比赛比分”的抓取逻辑，确保数据完整性。
-*   **静态化持久存储**: 自动生成 `daily_rankings.json` (榜单) 和 `daily_matches.json` (比分库)。前端优先读取这些静态资源，配合 Nginx 缓存，实现秒级加载，大幅降低 API 依赖。
+*   **智能冷启动**: 容器启动时会自动检查数据新鲜度。如果数据在 **4小时内** 已更新，将跳过耗时的全量爬取，仅刷新 Token，实现秒级重启。
+*   **静态化持久存储**: 自动生成 `daily_rankings.json` (榜单) 和 `daily_matches.json` (比分库)。前端优先读取这些静态资源，配合 Nginx 缓存，大幅降低 API 依赖。
 
 ### 🛡️ 网络优化 (AI Proxy)
 *   **Nginx 反向代理**: 内置 `/google-ai/` 转发规则，将前端的 AI 请求通过服务器中转至 Google。
@@ -51,7 +52,7 @@
 4.  **按需抓取 (Delta Fetch)**:
     *   如果某场比赛只有排名但没有比分（例如旧逻辑遗留的数据），脚本会**只抓取缺失的比分数据**并追加到文件。
     *   只有当本地完全缺失该 ID 时，才发起网络请求。
-5.  **原子写入**: 更新完成后，将完整数据写回磁盘，供 Nginx 读取。
+5.  **原子写入**: 更新完成后，将完整数据写回磁盘 (`/app/data`)，Nginx 通过软链接读取。
 
 ### 3. 前端查询策略 (Query Logic)
 前端 (`huaTiHuiService.ts`) 采用 **Cache-First** 策略：
@@ -73,7 +74,7 @@
 
 *   **前端**: React 19, Vite, Tailwind CSS
 *   **后端**: Node.js (无需 Puppeteer，纯 API 调用), `node-cron` 调度逻辑
-*   **数据流**: 定时任务 -> API -> JSON Files -> Nginx -> React Client
+*   **数据流**: 定时任务 -> API -> JSON Files (/app/data) -> Symlink -> Nginx -> React Client
 *   **AI**: Google Gemini API (`@google/genai`) + **Nginx Proxy** (解决网络连通性)
 *   **部署**: Docker (Nginx + Node.js 混合镜像)
 
@@ -106,19 +107,25 @@ docker build \
 ```
 
 ### 4. 运行容器
-启动时注入华体汇凭证。后台脚本会自动登录并开始执行每日凌晨的增量更新任务。
+启动时注入华体汇凭证，并**挂载数据卷**以保证重启后数据不丢失。
 
 ```bash
+# 1. 创建本地数据目录（可选，用于方便查看数据）
+mkdir -p /usr/local/hth-data
+
+# 2. 启动容器
 docker run -d \
   --name my-hth-dashboard \
   --restart always \
   -p 80:80 \
+  -v $(pwd)/hth-data:/app/data \
   -e HTH_USER="13800138000" \
   -e HTH_PASS="YourPassword123" \
   -e TZ="Asia/Shanghai" \
   hth-dashboard
 ```
 
+*   `-v /usr/local/hth-data:/app/data`: **关键配置**。将容器内的数据目录映射到宿主机，确保删除容器后，爬取到的 JSON 数据依然保留，下次启动可直接使用。
 *   `-e TZ="Asia/Shanghai"`: 设置时区，确保定时任务在正确的北京时间凌晨 5 点运行。
 
 ### 5. 验证与维护
@@ -127,7 +134,8 @@ docker run -d \
 ```bash
 docker logs -f my-hth-dashboard
 ```
-你应该能看到 `🚀 开始执行每日数据更新...` 或 `⏰ 定时器已设定` 等日志。
+*   正常启动日志：`✨ 数据依然新鲜 (上次更新: 2.50 小时前)` -> `⏩ 跳过启动时爬取任务`
+*   初次启动日志：`⚡ 执行启动时更新 (全量检查)...`
 
 **手动触发更新（可选）：**
 如果不想等自动调度，可以进入容器手动运行：
