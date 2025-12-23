@@ -4,10 +4,7 @@ type LogType = 'info' | 'success' | 'error';
 type Logger = (message: string, type?: LogType) => void;
 
 // --- Global Fetch Interceptor Setup ---
-// The SDK might not support 'baseUrl' in all versions/configurations.
-// We patch window.fetch to ensure requests to Google's API are redirected 
-// to our local Nginx proxy (/google-ai), which handles the VPN/Connection.
-const setupProxyInterceptor = () => {
+const setupProxyInterceptor = (onLog?: Logger) => {
     if ((window as any)._geminiProxyInstalled) return;
 
     const originalFetch = window.fetch;
@@ -32,21 +29,14 @@ const setupProxyInterceptor = () => {
         const targetDomain = 'generativelanguage.googleapis.com';
         
         if (urlStr.includes(targetDomain)) {
-            // Replace the Google domain with our local proxy path
-            // e.g. https://generativelanguage.googleapis.com/v1beta/... 
-            // becomes /google-ai/v1beta/...
-            const proxyBase = `${window.location.origin}/google-ai`;
+            // Use relative path '/google-ai' to avoid origin mismatch issues
+            const proxyBase = '/google-ai';
             const newUrlStr = urlStr.replace(`https://${targetDomain}`, proxyBase);
             
-            // console.debug(`[Proxy] Redirecting: ${urlStr} -> ${newUrlStr}`);
+            // Console debug for troubleshooting
+            console.log(`[Gemini Proxy] Redirecting: ${urlStr} -> ${newUrlStr}`);
 
-            // If input was a Request object, we must create a new Request with the new URL
-            // because Request.url is read-only.
             if (originalRequest) {
-                // Clone the request but override the URL
-                // We pass 'init' to override headers/method if provided in the fetch call, 
-                // but usually for Request objects, the body/headers are in the object itself.
-                // However, creating a new Request(newUrl, originalRequest) copies settings.
                 const newReq = new Request(newUrlStr, originalRequest);
                 return originalFetch(newReq, init);
             }
@@ -64,8 +54,7 @@ export const analyzeData = async (
   customPrompt?: string,
   onLog?: Logger
 ): Promise<string> => {
-  // Ensure proxy is active before making any calls
-  setupProxyInterceptor();
+  setupProxyInterceptor(onLog);
 
   // Helper to trigger log callback if provided
   const log = (msg: string, type: LogType = 'info') => {
@@ -81,25 +70,21 @@ export const analyzeData = async (
     return "错误: 未检测到 API_KEY 环境变量。请确保在运行环境中配置了 Google Gemini API Key。";
   }
 
-  // Safe logging of API Key
   const maskedKey = apiKey.length > 8 
     ? `${apiKey.substring(0, 5)}...${apiKey.substring(apiKey.length - 4)}` 
     : "(长度无效)";
   log(`🔑 API Key 状态: 已加载 (${maskedKey})`, 'info');
 
   try {
-    // 初始化 SDK
     const ai = new GoogleGenAI({ 
       apiKey: apiKey
     });
     
-    // Prepare data summary to avoid token limits if list is huge
-    // 50 items is usually enough for a statistical sample
+    // Limit data size
     const dataSample = data.length > 50 ? data.slice(0, 50) : data;
     const jsonStr = JSON.stringify(dataSample);
 
     log(`📦 数据负载: 共 ${data.length} 条数据，发送前 ${dataSample.length} 条用于分析。`, 'info');
-    log(`📏 Payload 大小: 约 ${jsonStr.length} 字符`, 'info');
 
     const defaultPrompt = `
       Analyze the following badminton match data (JSON format).
@@ -112,7 +97,6 @@ export const analyzeData = async (
     `;
 
     const prompt = customPrompt || defaultPrompt;
-    // 使用用户验证过的模型 (Gemini 3 Flash Preview)
     const modelId = 'gemini-3-flash-preview';
 
     log(`🧠 调用模型: ${modelId} (Via Nginx Proxy)`, 'info');
@@ -130,7 +114,6 @@ export const analyzeData = async (
 
     if (!response || !response.text) {
         log(`⚠️ 响应内容为空或格式异常。`, 'error');
-        log(`Response Keys: ${Object.keys(response || {}).join(', ')}`, 'error');
     } else {
         log(`✅ 分析成功! (耗时: ${duration}ms)`, 'success');
     }
@@ -142,27 +125,27 @@ export const analyzeData = async (
     
     let displayMessage = error.message;
 
-    // Try to parse JSON error message (common in Google SDK when proxy returns HTML)
+    // Enhanced Error Parsing
     try {
-        if (displayMessage.startsWith('{') && displayMessage.includes('404')) {
-            const parsed = JSON.parse(displayMessage);
-            if (parsed.error && parsed.error.message && parsed.error.message.includes('404 Not Found')) {
-                displayMessage = "服务器代理配置错误 (404 Not Found)。请检查 Nginx /google-ai/ 代理规则。";
-            }
-        }
-    } catch (e) {
-        // Parse failed, use original
-    }
+        // Log the raw error to console for debugging
+        console.error("Gemini API Error Raw:", error);
 
-    // Specific Handling for common errors
-    if (displayMessage.includes('Failed to fetch')) {
-        log("💡 提示: 网络请求失败。可能是 Nginx 代理未生效，或浏览器拦截了本地请求。", 'error');
-    } else if (displayMessage.includes('404')) {
-        log("💡 提示: 代理路径错误 (404)。请确认 Nginx 配置中 /google-ai/ 指向正确。", 'error');
-    }
+        if (displayMessage.startsWith('{')) {
+            const parsed = JSON.parse(displayMessage);
+            if (parsed.error && parsed.error.message) {
+                const innerMsg = parsed.error.message;
+                if (innerMsg.includes('404 Not Found') && innerMsg.includes('nginx')) {
+                    displayMessage = "Nginx 代理路由失败 (404)。请检查后端日志及 Nginx 配置中的 /google-ai/ 规则。";
+                } else {
+                    displayMessage = innerMsg;
+                }
+            }
+        } else if (displayMessage.includes('404')) {
+             displayMessage = "请求路径未找到 (404)。可能是 Nginx 代理未生效。";
+        }
+    } catch (e) {}
 
     log(`Message: ${displayMessage}`, 'error');
-
     return `分析失败。\n错误信息: ${displayMessage}`;
   }
 };

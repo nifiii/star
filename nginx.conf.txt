@@ -40,28 +40,32 @@ server {
     }
 
     # 6. Google Gemini AI Proxy
-    # 代理 /google-ai/ 开头的请求到 Google API
-    # 使用 ^~ 提高优先级，防止被其他正则匹配
-    location ^~ /google-ai/ {
-        # 使用 Docker 默认 DNS 解析器
-        resolver 127.0.0.11 ipv6=off;
-
-        # Standard Proxy Pass with Trailing Slash
-        # This automatically strips '/google-ai/' from the request path
-        # e.g. /google-ai/v1beta/... -> https://generativelanguage.googleapis.com/v1beta/...
-        proxy_pass https://generativelanguage.googleapis.com/;
+    # 使用 rewrite 明确剥离路径，防止 proxy_pass 自动映射出现双斜杠等问题
+    location /google-ai/ {
+        # 使用 Docker DNS (127.0.0.11)
+        resolver 127.0.0.11 ipv6=off valid=30s;
         
-        # SSL 和 Host 配置 (Google API 必须)
+        # 剥离 /google-ai/ 前缀
+        rewrite ^/google-ai/(.*) /$1 break;
+        
+        # 代理到 Google API
+        proxy_pass https://generativelanguage.googleapis.com;
+        
+        # 关键: 设置 Host 和 SNI
         proxy_ssl_server_name on;
         proxy_ssl_name generativelanguage.googleapis.com;
         proxy_set_header Host generativelanguage.googleapis.com;
         
-        # 禁用缓存和缓冲，确保流式响应流畅
+        # HTTP 1.1 和 Connection Header 清理 (支持长连接)
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        
+        # 禁用缓存/缓冲
         proxy_buffering off;
         proxy_cache off;
         chunked_transfer_encoding on;
         
-        # 超时设置 (300秒)
+        # 超时设置
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
     }
