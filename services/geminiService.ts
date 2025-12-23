@@ -140,24 +140,29 @@ export const analyzeData = async (
   } catch (error: any) {
     log(`❌ Gemini API 请求失败:`, 'error');
     
-    if (error instanceof Error) {
-        // Handle specific fetch errors (like 404 HTML response being parsed as JSON fail)
-        if (error.message.includes('Unexpected token') || error.message.includes('<')) {
-             log(`Message: 代理服务返回了非 JSON 格式 (可能是 404/502 错误页)。`, 'error');
-        } else {
-             log(`Message: ${error.message}`, 'error');
+    let displayMessage = error.message;
+
+    // Try to parse JSON error message (common in Google SDK when proxy returns HTML)
+    try {
+        if (displayMessage.startsWith('{') && displayMessage.includes('404')) {
+            const parsed = JSON.parse(displayMessage);
+            if (parsed.error && parsed.error.message && parsed.error.message.includes('404 Not Found')) {
+                displayMessage = "服务器代理配置错误 (404 Not Found)。请检查 Nginx /google-ai/ 代理规则。";
+            }
         }
-    } else {
-        log(`Unknown error: ${JSON.stringify(error)}`, 'error');
+    } catch (e) {
+        // Parse failed, use original
     }
 
-    if (error.message?.includes('401') || error.message?.includes('403')) {
-        log("💡 提示: 权限被拒绝，请检查 API Key 是否有效。", 'error');
-    }
-    if (error.message?.includes('Failed to fetch')) {
-         log("💡 提示: 网络连接失败。请检查 Nginx 代理是否正常运行。", 'error');
+    // Specific Handling for common errors
+    if (displayMessage.includes('Failed to fetch')) {
+        log("💡 提示: 网络请求失败。可能是 Nginx 代理未生效，或浏览器拦截了本地请求。", 'error');
+    } else if (displayMessage.includes('404')) {
+        log("💡 提示: 代理路径错误 (404)。请确认 Nginx 配置中 /google-ai/ 指向正确。", 'error');
     }
 
-    return `分析失败。\n错误信息: ${error.message}`;
+    log(`Message: ${displayMessage}`, 'error');
+
+    return `分析失败。\n错误信息: ${displayMessage}`;
   }
 };

@@ -43,16 +43,15 @@ server {
     # 代理 /google-ai/ 开头的请求到 Google API
     # 使用 ^~ 提高优先级，防止被其他正则匹配
     location ^~ /google-ai/ {
-        # 使用 Docker 默认 DNS 解析器 (防止 Nginx 启动时无法解析域名或 IP 变动)
+        # 使用 Docker 默认 DNS 解析器
         resolver 127.0.0.11 ipv6=off;
 
-        # 移除 /google-ai/ 前缀，提取剩余路径
-        rewrite ^/google-ai/(.*) /$1 break;
+        # Standard Proxy Pass with Trailing Slash
+        # This automatically strips '/google-ai/' from the request path
+        # e.g. /google-ai/v1beta/... -> https://generativelanguage.googleapis.com/v1beta/...
+        proxy_pass https://generativelanguage.googleapis.com/;
         
-        # 代理到 Google API
-        proxy_pass https://generativelanguage.googleapis.com;
-        
-        # SSL 和 Host 配置
+        # SSL 和 Host 配置 (Google API 必须)
         proxy_ssl_server_name on;
         proxy_ssl_name generativelanguage.googleapis.com;
         proxy_set_header Host generativelanguage.googleapis.com;

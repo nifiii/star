@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
 
 # 设置默认时区 (可通过 docker run -e TZ=... 覆盖)
 ENV TZ=Asia/Shanghai
+ENV IS_DOCKER=true
 
 # 2. 复制依赖文件并安装项目依赖
 COPY package*.json ./
@@ -35,13 +36,11 @@ RUN rm -rf /var/www/html/* && cp -r dist/* /var/www/html/
 # 复制自定义的 Nginx 配置
 COPY nginx.conf.txt /etc/nginx/conf.d/default.conf
 
-# 6. 路径映射
-# 脚本 scripts/getToken.js 会写入到:
-#   - "../public/auth_config.json" (鉴权信息)
-#   - "../public/daily_rankings.json" (榜单缓存)
-#   - "../public/daily_matches.json" (比分缓存)
-# 我们将 /app/public 软链接到 Nginx 的 Web 根目录，以便前端可以访问这些生成的 JSON 文件
-RUN rm -rf /app/public && ln -s /var/www/html /app/public
+# 6. 数据持久化配置
+# 创建数据目录用于挂载 Volume
+RUN mkdir -p /app/data
+# 声明 Volume, 部署时需挂载 -v host_path:/app/data
+VOLUME ["/app/data"]
 
 # 暴露端口
 EXPOSE 80

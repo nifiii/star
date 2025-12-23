@@ -4,11 +4,26 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// 在 Docker 中, /app/public 是软链接指向 /var/www/html
-const publicDir = path.resolve(__dirname, '../public');
-const authPath = path.resolve(publicDir, 'auth_config.json');
-const rankingsPath = path.resolve(publicDir, 'daily_rankings.json');
-const matchesPath = path.resolve(publicDir, 'daily_matches.json');
+
+// --- Environment & Paths Configuration ---
+const isDocker = process.env.IS_DOCKER === 'true';
+
+// 1. Persistent Storage Directory (Where files actually live)
+// In Docker: /app/data (Mounted Volume)
+// Local: ../data
+const dataDir = isDocker ? '/app/data' : path.resolve(__dirname, '../data');
+
+// 2. Public Web Root (Where Nginx serves files from)
+// In Docker: /var/www/html
+// Local: ../public
+const publicDir = isDocker ? '/var/www/html' : path.resolve(__dirname, '../public');
+
+// File Paths (Pointing to Storage)
+const authPath = path.join(dataDir, 'auth_config.json');
+const rankingsPath = path.join(dataDir, 'daily_rankings.json');
+const matchesPath = path.join(dataDir, 'daily_matches.json');
+
+const MANAGED_FILES = ['auth_config.json', 'daily_rankings.json', 'daily_matches.json'];
 
 // 用户配置
 const CREDENTIALS = {
@@ -41,38 +56,86 @@ const getHeaders = (token, referer = 'https://sports.ymq.me/') => ({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 });
 
-// --- Initialization ---
-function initPlaceholderFiles() {
-    console.log(`📂 初始化路径: ${publicDir}`);
-    
-    // 尝试创建目录（如果不存在）
+// --- Initialization & Persistence ---
+
+function initEnvironment() {
+    console.log(`📂 环境初始化:`);
+    console.log(`   - 数据存储: ${dataDir}`);
+    console.log(`   - Web发布: ${publicDir}`);
+
+    // 1. Ensure directories exist
+    if (!fs.existsSync(dataDir)) {
+        console.log("   + 创建数据存储目录...");
+        try { fs.mkdirSync(dataDir, { recursive: true }); } catch(e) { console.error("   ❌ 创建数据目录失败:", e.message); }
+    }
     if (!fs.existsSync(publicDir)) {
-        console.log("   目录不存在，尝试创建...");
-        try { fs.mkdirSync(publicDir, { recursive: true }); } catch(e) { console.error("   创建目录失败 (可能是软链接):", e.message); }
+         // Local dev might need this
+         try { fs.mkdirSync(publicDir, { recursive: true }); } catch(e) {}
     }
 
+    // 2. Initialize Placeholder Files if missing in Storage
     const initData = {
-        updatedAt: Date.now(),
-        dateString: new Date().toLocaleString(),
+        updatedAt: 0, // 0 indicates stale/init
+        dateString: "初始化中",
         count: 0,
         city: "初始化中",
         status: "initializing",
         data: []
     };
 
-    // 强制写入占位符，确保文件存在
     try {
-        if (!fs.existsSync(rankingsPath)) {
-            fs.writeFileSync(rankingsPath, JSON.stringify(initData));
-            console.log("   + 已创建 daily_rankings.json");
-        }
-        if (!fs.existsSync(matchesPath)) {
-            fs.writeFileSync(matchesPath, JSON.stringify(initData));
-            console.log("   + 已创建 daily_matches.json");
-        }
+        if (!fs.existsSync(rankingsPath)) fs.writeFileSync(rankingsPath, JSON.stringify(initData));
+        if (!fs.existsSync(matchesPath)) fs.writeFileSync(matchesPath, JSON.stringify(initData));
+        // auth_config handled by login
     } catch (e) {
         console.error("   ❌ 初始化文件写入失败:", e.message);
     }
+
+    // 3. Create Symlinks: Storage -> WebRoot
+    // This allows Nginx to serve files located in the persistent Volume
+    console.log("   🔗 正在建立文件映射...");
+    MANAGED_FILES.forEach(fileName => {
+        const sourcePath = path.join(dataDir, fileName);
+        const linkPath = path.join(publicDir, fileName);
+
+        try {
+            // Remove existing link or file in WebRoot to avoid conflicts
+            if (fs.existsSync(linkPath) || (fs.lstatSync(linkPath).isSymbolicLink() rescue false)) {
+                fs.unlinkSync(linkPath);
+            }
+        } catch(e) {} // Ignore error if file doesn't exist
+
+        try {
+            if (fs.existsSync(sourcePath)) {
+                fs.symlinkSync(sourcePath, linkPath);
+                // console.log(`      ${fileName} -> OK`);
+            }
+        } catch (e) {
+            console.error(`      ❌ 映射失败 ${fileName}:`, e.message);
+        }
+    });
+}
+
+function isDataFresh() {
+    try {
+        if (fs.existsSync(authPath)) {
+            const data = JSON.parse(fs.readFileSync(authPath, 'utf-8'));
+            if (data.updatedAt) {
+                // Check if updated within last 4 hours
+                const lastUpdate = new Date(data.updatedAt).getTime();
+                // If parsing fails (invalid date), it returns NaN, which is not < 4 hours
+                const diffHours = (Date.now() - lastUpdate) / (1000 * 60 * 60);
+                
+                if (diffHours < 4) {
+                    console.log(`✨ 数据依然新鲜 (上次更新: ${diffHours.toFixed(2)} 小时前)`);
+                    return true;
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("   ⚠️ 检查数据新鲜度失败:", e.message);
+    }
+    return false;
 }
 
 async function loginAndSave() {
@@ -105,8 +168,6 @@ async function loginAndSave() {
 
       if (!response.ok) {
            console.error(`❌ 登录 HTTP 错误: ${response.status}`);
-           const text = await response.text();
-           console.error(`   响应内容: ${text.substring(0, 100)}`);
            return false;
       }
 
@@ -120,11 +181,18 @@ async function loginAndSave() {
               sn: DATA_QUERY_SN, 
               snTime: Date.now(),
               username: data.userinfo.nickname || CREDENTIALS.username,
-              updatedAt: new Date().toLocaleString(),
+              updatedAt: new Date().toLocaleString(), // Store formatted string
+              updatedAtTs: Date.now(), // Store timestamp for logic
               status: "active"
           };
 
           fs.writeFileSync(authPath, JSON.stringify(configData, null, 2));
+          // Re-link auth file just in case
+          try {
+             const linkPath = path.join(publicDir, 'auth_config.json');
+             if (!fs.existsSync(linkPath)) fs.symlinkSync(authPath, linkPath);
+          } catch(e) {}
+
           console.log(`✅ 登录成功! Token前缀: ${currentToken.substring(0, 6)}...`);
           return true;
       } else {
@@ -144,7 +212,7 @@ async function fetchGameList() {
     const url = `https://applyv3.ymq.me/public/public/getgamefulllist?t=${Date.now()}`;
     
     // 严格限制：广东省 广州市
-    // 新增 sports_id: 1 (羽毛球), 修复数据获取为空的问题
+    // 新增 sports_id: 1 (羽毛球)
     const requestBody = {
         page_num: 1,
         page_size: 100,
@@ -172,7 +240,6 @@ async function fetchGameList() {
                 const sampleGame = list[0];
                 let debugDate = '未知';
                 
-                // 优化日志调试信息，确保能看到有效日期
                 if (sampleGame.end_game_time) {
                     debugDate = new Date(sampleGame.end_game_time * 1000).toLocaleDateString();
                 } else if (sampleGame.start_date) {
@@ -187,17 +254,14 @@ async function fetchGameList() {
             const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
             
             const recentGames = list.filter(g => {
-                // 优先使用 end_game_time (秒级时间戳)
                 if (g.end_game_time) {
                     const gameTime = g.end_game_time * 1000;
                     return gameTime > oneYearAgo;
                 }
-                // 兼容旧字段 start_date (字符串)
                 if (g.start_date) {
                     const gameDate = new Date(g.start_date).getTime();
                     return gameDate > oneYearAgo;
                 }
-                // 如果没有时间信息，则默认视为不满足条件
                 return false;
             });
 
@@ -339,7 +403,6 @@ async function runDailyUpdate() {
     const allGames = await fetchGameList();
     if (allGames.length === 0) {
         console.log("⚠️ 没有找到符合条件的赛事，更新结束。");
-        // 即使没有赛事，也视为成功执行了一次检查
         return true; 
     }
 
@@ -417,7 +480,7 @@ async function runDailyUpdate() {
     const mergedRankings = [...existingRankData, ...newRankings];
     const mergedMatches = [...existingMatchData, ...newMatches];
     
-    console.log(`💾 正在写入磁盘...`);
+    console.log(`💾 正在写入磁盘 (${dataDir})...`);
     try {
         fs.writeFileSync(rankingsPath, JSON.stringify({
             updatedAt: now, dateString: dateStr, count: mergedRankings.length, city: "广州市", status: "active", data: mergedRankings
@@ -432,7 +495,6 @@ async function runDailyUpdate() {
     return true;
 }
 
-// --- Robust Scheduler ---
 function scheduleNextRun() {
     const now = new Date();
     // 目标: 北京时间 凌晨 05:00
@@ -467,39 +529,27 @@ function scheduleNextRun() {
 (async () => {
     console.log("🟢 脚本启动...");
     
-    // 1. 初始化文件
-    initPlaceholderFiles();
+    // 1. 初始化环境 (目录 & 链接)
+    initEnvironment();
 
-    // 2. 立即执行首次检查
-    console.log(`⚡ 执行启动时更新...`);
-    let initialSuccess = false;
-    try {
-        initialSuccess = await runDailyUpdate();
-    } catch(e) {
-        console.error("Startup update crashed:", e);
-    }
-
-    // 3. 重试逻辑 (失败 31 分钟后重试一次)
-    if (!initialSuccess) {
-        console.log("⚠️ 启动时更新未成功，将在 31 分钟后尝试重试...");
-        await wait(31 * 60 * 1000); 
-        
-        console.log("🔄 开始执行重试更新...");
-        try {
-            const retrySuccess = await runDailyUpdate();
-            if (retrySuccess) console.log("✅ 重试更新成功。");
-            else console.error("❌ 重试更新依然失败，等待次日定时任务。");
-        } catch(e) {
-            console.error("Retry update crashed:", e);
-        }
+    // 2. 检查是否需要运行启动时更新
+    // 如果数据足够新鲜 (4小时内)，则跳过更新，只刷新 Token
+    if (isDataFresh()) {
+        console.log("⏩ 跳过启动时爬取任务，仅执行 Token 保活...");
+        await loginAndSave();
     } else {
-        console.log("✅ 启动时更新成功。");
+        console.log(`⚡ 执行启动时更新 (全量检查)...`);
+        try {
+            await runDailyUpdate();
+        } catch(e) {
+            console.error("Startup update crashed:", e);
+        }
     }
 
-    // 4. 启动定时器 (无论首次成功与否，都要保证第二天的任务被调度)
+    // 3. 启动定时器
     scheduleNextRun();
     
-    // 5. 保持 Token 活跃 (每2小时)
+    // 4. 保持 Token 活跃 (每2小时)
     setInterval(() => {
         console.log("💓 Token 保活检查...");
         loginAndSave();
