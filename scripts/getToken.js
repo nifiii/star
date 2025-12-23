@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// 在 Docker 中, /app/public 是软链接指向 /var/www/html
 const publicDir = path.resolve(__dirname, '../public');
 const authPath = path.resolve(publicDir, 'auth_config.json');
 const rankingsPath = path.resolve(publicDir, 'daily_rankings.json');
@@ -15,7 +16,7 @@ const CREDENTIALS = {
   password: process.env.HTH_PASS || 'Gao@2018.com'
 };
 
-// 1. 登录专用固定配置
+// 1. 登录专用固定配置 (来自抓包)
 const LOGIN_HANDSHAKE_HEADERS = {
     token: "DLFFG4-892b3448b953b5da525470ec2e5147d1202a126c",
     sn: "2b3467f4850c6743673871aa6c281f6a",
@@ -37,11 +38,45 @@ const getHeaders = (token, referer = 'https://sports.ymq.me/') => ({
     'Origin': 'https://sports.ymq.me',
     'Referer': referer,
     'mode': 'cors',
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 });
 
+// --- Initialization ---
+function initPlaceholderFiles() {
+    console.log(`📂 初始化路径: ${publicDir}`);
+    
+    // 尝试创建目录（如果不存在）
+    if (!fs.existsSync(publicDir)) {
+        console.log("   目录不存在，尝试创建...");
+        try { fs.mkdirSync(publicDir, { recursive: true }); } catch(e) { console.error("   创建目录失败 (可能是软链接):", e.message); }
+    }
+
+    const initData = {
+        updatedAt: Date.now(),
+        dateString: new Date().toLocaleString(),
+        count: 0,
+        city: "初始化中",
+        status: "initializing",
+        data: []
+    };
+
+    // 强制写入占位符，确保文件存在
+    try {
+        if (!fs.existsSync(rankingsPath)) {
+            fs.writeFileSync(rankingsPath, JSON.stringify(initData));
+            console.log("   + 已创建 daily_rankings.json");
+        }
+        if (!fs.existsSync(matchesPath)) {
+            fs.writeFileSync(matchesPath, JSON.stringify(initData));
+            console.log("   + 已创建 daily_matches.json");
+        }
+    } catch (e) {
+        console.error("   ❌ 初始化文件写入失败:", e.message);
+    }
+}
+
 async function loginAndSave() {
-  console.log(`\n[${new Date().toLocaleString()}] 🚀 开始执行登录流程...`);
+  console.log(`\n🔑 [${new Date().toLocaleString()}] 正在登录华体汇...`);
   
   const loginUrl = `https://user.ymq.me/public/public/login?t=${Date.now()}`;
   const requestTime = Date.now();
@@ -68,6 +103,13 @@ async function loginAndSave() {
           body: JSON.stringify(payload)
       });
 
+      if (!response.ok) {
+           console.error(`❌ 登录 HTTP 错误: ${response.status}`);
+           const text = await response.text();
+           console.error(`   响应内容: ${text.substring(0, 100)}`);
+           return false;
+      }
+
       const data = await response.json();
 
       if (data.code === 1 && data.userinfo && data.userinfo.token) {
@@ -82,16 +124,15 @@ async function loginAndSave() {
               status: "active"
           };
 
-          if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
           fs.writeFileSync(authPath, JSON.stringify(configData, null, 2));
-          console.log(`✅ 登录成功，Token 已更新。`);
+          console.log(`✅ 登录成功! Token前缀: ${currentToken.substring(0, 6)}...`);
           return true;
       } else {
-          console.error('❌ 登录失败:', data.message || '未知错误');
+          console.error('❌ 登录 API 拒绝:', data.message || JSON.stringify(data));
           return false;
       }
   } catch (error) {
-      console.error('❌ 登录请求出错:', error);
+      console.error('❌ 登录网络请求异常:', error.message);
       return false;
   }
 }
@@ -99,14 +140,14 @@ async function loginAndSave() {
 // --- Scraper Functions ---
 
 async function fetchGameList() {
-    console.log("🔎 正在获取广州市已结束的赛事列表...");
+    console.log("🔎 获取赛事列表 (范围: 广东省广州市)...");
     const url = `https://applyv3.ymq.me/public/public/getgamefulllist?t=${Date.now()}`;
     
-    // 默认配置：广州，已结束 (statuss: 10)
+    // 严格限制：广东省 广州市
     const requestBody = {
         page_num: 1,
         page_size: 100,
-        statuss: [10], 
+        statuss: [10], // 已结束
         province: ["广东省"],
         city: ["广州市"] 
     };
@@ -121,19 +162,26 @@ async function fetchGameList() {
             })
         });
         const json = await res.json();
+        
         if (json && json.data && Array.isArray(json.data.list)) {
-            // 过滤掉太老的比赛，只保留最近一年的
+            const list = json.data.list;
+            console.log(`   API 返回 ${list.length} 个广州赛事。正在筛选近一年数据...`);
+
             const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
-            const recentGames = json.data.list.filter(g => {
+            
+            const recentGames = list.filter(g => {
                 const gameDate = new Date(g.start_date).getTime();
                 return gameDate > oneYearAgo;
             });
-            console.log(`✅ 获取到 ${recentGames.length} 场近期已结束赛事。`);
+
+            console.log(`✅ 筛选出 ${recentGames.length} 场近期已结束赛事。`);
             return recentGames;
+        } else {
+            console.warn("⚠️ 赛事列表 API 返回格式异常或为空:", JSON.stringify(json).substring(0, 100));
         }
         return [];
     } catch (e) {
-        console.error("fetchGameList error", e);
+        console.error("fetchGameList 异常:", e.message);
         return [];
     }
 }
@@ -141,7 +189,6 @@ async function fetchGameList() {
 async function fetchRankingsForGame(game) {
     const allRanks = [];
     try {
-        // 1. Get Items
         const itemsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', {
             method: 'POST',
             headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
@@ -154,7 +201,6 @@ async function fetchRankingsForGame(game) {
         
         if (!itemsData?.detail) return [];
 
-        // 2. Loop Items
         for (const item of itemsData.detail) {
             const rankRes = await fetch('https://race.ymq.me/webservice/appWxRank/showRankScore.do', {
                 method: 'POST',
@@ -179,35 +225,27 @@ async function fetchRankingsForGame(game) {
                     });
                 });
             }
-            // Small delay to be polite
-            await wait(150);
+            await wait(100);
         }
     } catch (e) {
-        console.warn(`Error scanning rankings for game ${game.id}: ${e.message}`);
+        console.warn(`   ⚠️ [${game.game_name}] 排名抓取部分失败: ${e.message}`);
     }
     return allRanks;
 }
 
-// New: Fetch Matches with Pagination
 async function fetchMatchesForGame(game) {
     const allMatches = [];
     let page = 1;
-    const pageSize = 50; // Use larger page size to reduce requests
+    const pageSize = 50;
     let hasMore = true;
 
     try {
         while (hasMore) {
-            const url = `https://race.ymq.me/webservice/appWxMatch/matchesScore.do?t=${Date.now()}`;
-            const res = await fetch(url, {
+            const res = await fetch(`https://race.ymq.me/webservice/appWxMatch/matchesScore.do?t=${Date.now()}`, {
                 method: 'POST',
                 headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
                 body: JSON.stringify({
-                    body: {
-                        raceId: game.id,
-                        page: page,
-                        rows: pageSize,
-                        keyword: "" // Fetch ALL matches
-                    },
+                    body: { raceId: game.id, page: page, rows: pageSize, keyword: "" },
                     header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" }
                 })
             });
@@ -221,7 +259,6 @@ async function fetchMatchesForGame(game) {
                 break;
             }
 
-            // Map and minimize data to save disk space
             rows.forEach(m => {
                 let p1 = m.mateOne;
                 if (!p1 && Array.isArray(m.playerOnes) && m.playerOnes.length > 0) p1 = m.playerOnes[0].name;
@@ -249,161 +286,130 @@ async function fetchMatchesForGame(game) {
                 });
             });
 
-            // Check if we reached the end
             if (rows.length < pageSize || (json.detail.total && allMatches.length >= json.detail.total)) {
                 hasMore = false;
             } else {
                 page++;
-                await wait(200); // 200ms delay between pages
+                await wait(100);
             }
         }
     } catch (e) {
-        console.warn(`Error scanning matches for game ${game.id}: ${e.message}`);
+        console.warn(`   ⚠️ [${game.game_name}] 比分抓取部分失败: ${e.message}`);
     }
     
-    console.log(`    > 🏟️ ${game.game_name}: 获取到 ${allMatches.length} 场比赛比分`);
     return allMatches;
 }
 
 async function runDailyUpdate() {
-    console.log(`\n📅 [${new Date().toLocaleString()}] 开始执行每日数据更新...`);
+    console.log(`\n📅 [${new Date().toLocaleString()}] >>> 开始执行数据更新任务 <<<`);
     
-    // 1. Ensure logged in
     const loginSuccess = await loginAndSave();
-    if (!loginSuccess) return;
-
-    // 2. Fetch Latest Games List
-    const allGames = await fetchGameList();
-    if (allGames.length === 0) {
-        console.log("⚠️ 没有找到赛事，跳过更新。");
-        return;
+    if (!loginSuccess) {
+        console.error("⛔ 登录失败，终止本次更新。");
+        return false; 
     }
 
-    // 3. --- LOAD EXISTING DATA ---
+    const allGames = await fetchGameList();
+    if (allGames.length === 0) {
+        console.log("⚠️ 没有找到符合条件的赛事，更新结束。");
+        // 即使没有赛事，也视为成功执行了一次检查
+        return true; 
+    }
+
+    // Load Existing Data
     let existingRankData = [];
     let existingMatchData = [];
     
-    // Load Rankings
     if (fs.existsSync(rankingsPath)) {
         try {
-            const rContent = fs.readFileSync(rankingsPath, 'utf-8');
-            const parsed = JSON.parse(rContent);
-            if (parsed && Array.isArray(parsed.data)) {
-                existingRankData = parsed.data;
-            }
-        } catch (e) { console.error("Error reading rankings cache:", e.message); }
+            const data = JSON.parse(fs.readFileSync(rankingsPath, 'utf-8'));
+            if (Array.isArray(data.data)) existingRankData = data.data;
+        } catch (e) {}
     }
     
-    // Load Matches
     if (fs.existsSync(matchesPath)) {
          try {
-            const mContent = fs.readFileSync(matchesPath, 'utf-8');
-            const parsed = JSON.parse(mContent);
-            if (parsed && Array.isArray(parsed.data)) {
-                existingMatchData = parsed.data;
-            }
-        } catch (e) { console.error("Error reading matches cache:", e.message); }
+            const data = JSON.parse(fs.readFileSync(matchesPath, 'utf-8'));
+            if (Array.isArray(data.data)) existingMatchData = data.data;
+        } catch (e) {}
     }
 
-    // 4. --- INCREMENTAL CHECK LOGIC ---
-    // Decouple checks: We might have rankings but lack matches for the same game
     const rankedGameIds = new Set(existingRankData.map(r => r.raceId));
     const matchedGameIds = new Set(existingMatchData.map(m => m.raceId));
-
-    console.log(`📦 本地缓存状态:`);
-    console.log(`   - 排名已收录: ${rankedGameIds.size} 场赛事`);
-    console.log(`   - 比分已收录: ${matchedGameIds.size} 场赛事`);
 
     let newRankings = [];
     let newMatches = [];
     let updatesMade = false;
 
-    console.log(`🚀 开始对比并增量抓取...`);
+    console.log(`📊 现有数据: 排名 ${rankedGameIds.size} 场, 比分 ${matchedGameIds.size} 场`);
 
     for (let i = 0; i < allGames.length; i++) {
         const game = allGames[i];
         const hasRank = rankedGameIds.has(game.id);
         const hasMatch = matchedGameIds.has(game.id);
 
-        if (hasRank && hasMatch) {
-            // Data is complete for this game
-            continue;
-        }
+        if (hasRank && hasMatch) continue;
 
-        console.log(`[${i+1}/${allGames.length}] 检查: ${game.game_name}`);
+        console.log(`Processing [${i+1}/${allGames.length}]: ${game.game_name}`);
 
-        // A. Fetch Rankings if missing
         if (!hasRank) {
-            console.log(`    --> ⚠️ 缺失排名数据，正在抓取...`);
             const ranks = await fetchRankingsForGame(game);
             if (ranks.length > 0) {
                 newRankings = newRankings.concat(ranks);
                 updatesMade = true;
+                console.log(`   + 抓取到 ${ranks.length} 条排名`);
             }
             await wait(1000); 
         }
 
-        // B. Fetch Matches if missing
         if (!hasMatch) {
-            console.log(`    --> ⚠️ 缺失比分数据，正在抓取...`);
             const matches = await fetchMatchesForGame(game);
             if (matches.length > 0) {
                 newMatches = newMatches.concat(matches);
                 updatesMade = true;
+                console.log(`   + 抓取到 ${matches.length} 条比分`);
             }
             await wait(1000);
         }
     }
 
-    if (!updatesMade) {
-        console.log("✅ 所有近期赛事的排名和比分均为最新，无需更新。");
-        // Update timestamp on files to indicate system is alive
-        const now = Date.now();
-        const dateStr = new Date().toLocaleString();
-        
-        fs.writeFileSync(rankingsPath, JSON.stringify({ updatedAt: now, dateString: dateStr, count: existingRankData.length, city: "广州市", data: existingRankData }));
-        fs.writeFileSync(matchesPath, JSON.stringify({ updatedAt: now, dateString: dateStr, count: existingMatchData.length, city: "广州市", data: existingMatchData }));
-        return;
-    }
-
-    // 5. Merge & Save
-    let mergedRankings = [...existingRankData, ...newRankings];
-    let mergedMatches = [...existingMatchData, ...newMatches];
-    
     const now = Date.now();
     const dateStr = new Date().toLocaleString();
 
-    // Save Rankings
-    const rankPayload = {
-        updatedAt: now,
-        dateString: dateStr,
-        count: mergedRankings.length,
-        city: "广州市",
-        data: mergedRankings
-    };
-    fs.writeFileSync(rankingsPath, JSON.stringify(rankPayload));
+    if (!updatesMade) {
+        console.log("✅ 数据已是最新，仅更新时间戳。");
+        try {
+            const rPayload = { updatedAt: now, dateString: dateStr, count: existingRankData.length, city: "广州市", status: "active", data: existingRankData };
+            const mPayload = { updatedAt: now, dateString: dateStr, count: existingMatchData.length, city: "广州市", status: "active", data: existingMatchData };
+            fs.writeFileSync(rankingsPath, JSON.stringify(rPayload));
+            fs.writeFileSync(matchesPath, JSON.stringify(mPayload));
+        } catch(e) { console.error("Write error:", e.message); }
+        return true;
+    }
 
-    // Save Matches
-    const matchPayload = {
-        updatedAt: now,
-        dateString: dateStr,
-        count: mergedMatches.length,
-        city: "广州市",
-        data: mergedMatches
-    };
-    fs.writeFileSync(matchesPath, JSON.stringify(matchPayload));
-
-    console.log(`\n🎉 增量更新完成!`);
-    if (newRankings.length > 0) console.log(`   + 新增排名: ${newRankings.length} 条`);
-    if (newMatches.length > 0) console.log(`   + 新增比分: ${newMatches.length} 条`);
-    console.log(`💾 数据已持久化到磁盘。`);
+    const mergedRankings = [...existingRankData, ...newRankings];
+    const mergedMatches = [...existingMatchData, ...newMatches];
+    
+    console.log(`💾 正在写入磁盘...`);
+    try {
+        fs.writeFileSync(rankingsPath, JSON.stringify({
+            updatedAt: now, dateString: dateStr, count: mergedRankings.length, city: "广州市", status: "active", data: mergedRankings
+        }));
+        fs.writeFileSync(matchesPath, JSON.stringify({
+            updatedAt: now, dateString: dateStr, count: mergedMatches.length, city: "广州市", status: "active", data: mergedMatches
+        }));
+        console.log(`🎉 更新成功! 新增排名: ${newRankings.length}, 新增比分: ${newMatches.length}`);
+    } catch(e) {
+        console.error("❌ 写入文件失败:", e.message);
+    }
+    return true;
 }
 
 // --- Robust Scheduler ---
 function scheduleNextRun() {
     const now = new Date();
-    
-    // Target: Next 5:00 AM (Beijing/Shanghai Time, UTC+8) -> UTC 21:00 previous day
+    // 目标: 北京时间 凌晨 05:00
+    // UTC时间: 21:00 (前一天)
     const targetHourUTC = 21; 
     
     let nextRun = new Date();
@@ -414,36 +420,62 @@ function scheduleNextRun() {
     }
     
     const delay = nextRun.getTime() - now.getTime();
-    const hours = Math.floor(delay / (1000 * 60 * 60));
-    const minutes = Math.floor((delay % (1000 * 60 * 60)) / (1000 * 60));
+    const hours = (delay / (1000 * 60 * 60)).toFixed(1);
     
-    console.log(`⏰ 定时器已设定。下次更新将在: ${nextRun.toISOString()} (约 ${hours}小时${minutes}分后)`);
+    console.log(`⏰ 下次定时更新已排程: ${nextRun.toISOString()} (约 ${hours} 小时后)`);
     
     setTimeout(async () => {
         try {
             await runDailyUpdate();
         } catch (e) {
-            console.error("Daily update failed:", e);
+            console.error("Scheduled update crash:", e);
         } finally {
             scheduleNextRun();
         }
     }, delay);
 }
 
-// --- Init ---
+// --- Entry Point ---
 
-// 1. Initial Data Check
-if (!fs.existsSync(rankingsPath)) {
-    console.log("📂 未发现缓存文件，3秒后执行首次全量抓取...");
-    setTimeout(runDailyUpdate, 3000); 
-} else {
-    // Run update on start to catch up if container was down, then schedule
-    console.log("⚡ 系统启动，正在检查数据完整性...");
-    setTimeout(runDailyUpdate, 3000);
-}
+(async () => {
+    console.log("🟢 脚本启动...");
+    
+    // 1. 初始化文件
+    initPlaceholderFiles();
 
-// 2. Start Scheduler
-scheduleNextRun();
+    // 2. 立即执行首次检查
+    console.log(`⚡ 执行启动时更新...`);
+    let initialSuccess = false;
+    try {
+        initialSuccess = await runDailyUpdate();
+    } catch(e) {
+        console.error("Startup update crashed:", e);
+    }
 
-// 3. Token Refresh (Keep session alive)
-setInterval(loginAndSave, 2 * 60 * 60 * 1000);
+    // 3. 重试逻辑 (失败 31 分钟后重试一次)
+    if (!initialSuccess) {
+        console.log("⚠️ 启动时更新未成功，将在 31 分钟后尝试重试...");
+        await wait(31 * 60 * 1000); 
+        
+        console.log("🔄 开始执行重试更新...");
+        try {
+            const retrySuccess = await runDailyUpdate();
+            if (retrySuccess) console.log("✅ 重试更新成功。");
+            else console.error("❌ 重试更新依然失败，等待次日定时任务。");
+        } catch(e) {
+            console.error("Retry update crashed:", e);
+        }
+    } else {
+        console.log("✅ 启动时更新成功。");
+    }
+
+    // 4. 启动定时器 (无论首次成功与否，都要保证第二天的任务被调度)
+    scheduleNextRun();
+    
+    // 5. 保持 Token 活跃 (每2小时)
+    setInterval(() => {
+        console.log("💓 Token 保活检查...");
+        loginAndSave();
+    }, 2 * 60 * 60 * 1000);
+
+})();
