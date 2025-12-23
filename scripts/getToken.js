@@ -100,15 +100,20 @@ function initEnvironment() {
 
         try {
             // Remove existing link or file in WebRoot to avoid conflicts
-            if (fs.existsSync(linkPath) || (fs.lstatSync(linkPath).isSymbolicLink() rescue false)) {
-                fs.unlinkSync(linkPath);
+            // Correct Logic: Try to access it, if no error, it exists -> delete it.
+            try {
+                fs.lstatSync(linkPath); // Throws if not found
+                fs.unlinkSync(linkPath); // Delete if found
+            } catch (e) {
+                if (e.code !== 'ENOENT') throw e; // Only ignore "not found"
             }
-        } catch(e) {} // Ignore error if file doesn't exist
+        } catch(e) {
+             console.error(`      ⚠️ 清理旧文件失败 ${fileName}:`, e.message);
+        }
 
         try {
             if (fs.existsSync(sourcePath)) {
                 fs.symlinkSync(sourcePath, linkPath);
-                // console.log(`      ${fileName} -> OK`);
             }
         } catch (e) {
             console.error(`      ❌ 映射失败 ${fileName}:`, e.message);
@@ -527,7 +532,7 @@ function scheduleNextRun() {
 // --- Entry Point ---
 
 (async () => {
-    console.log("🟢 脚本启动...");
+    console.log("🟢 脚本启动 (v1.0.2 - Fix syntax error)...");
     
     // 1. 初始化环境 (目录 & 链接)
     initEnvironment();
