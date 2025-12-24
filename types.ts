@@ -1,3 +1,4 @@
+
 export interface ApiHeaderConfig {
   token: string;
   sn: string;
@@ -13,11 +14,15 @@ export interface UserCredentials {
 }
 
 export interface SearchConfig {
-  birthYear: number;
+  // birthYear removed
   province: string; // e.g. "广东省"
   city: string;     // e.g. "广州市"
   gameKeywords: string; // e.g. "少年,小学" -> regex OR logic
-  groupKeywords: string; // Comma separated, e.g. "U8,乙B"
+  
+  // Split group filtering
+  uKeywords: string; // U-series (OR logic), e.g. "U8,U9"
+  levelKeywords: string; // Level/School (AND logic), e.g. "小学,乙"
+  
   itemKeywords: string; // Comma separated, e.g. "男单"
   targetPlayerName?: string; // New: For direct search
   playerGender?: 'M' | 'F' | null; // New: Gender filter for player search

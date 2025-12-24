@@ -2,6 +2,19 @@ import { ApiHeaderConfig, SearchConfig, GameBasicInfo, MatchItem, PlayerRank, Ma
 
 const CORS_PROXY_WARNING = "注意：从本地 Web 应用请求 ymq.me 通常需要开启 CORS 代理或浏览器插件（如 'Allow CORS'）。";
 
+// --- GLOBAL MEMORY CACHE (Session Level) ---
+// Prevents re-downloading the large JSON files if the user searches multiple times in one session.
+const MEMORY_CACHE: {
+    rankings: { data: PlayerRank[], timestamp: number } | null;
+    matches: { data: MatchScoreResult[], timestamp: number } | null;
+} = {
+    rankings: null,
+    matches: null
+};
+
+// Cache Time-To-Live in Memory (e.g., 30 minutes)
+const MEMORY_CACHE_TTL = 30 * 60 * 1000; 
+
 const getHeaders = (config: ApiHeaderConfig, referer = 'https://sports.ymq.me/') => {
   return {
     'Accept': 'application/json, text/plain, */*',
@@ -23,21 +36,6 @@ async function runInBatches<T, R>(items: T[], batchSize: number, fn: (item: T, i
   }
   return results;
 }
-
-// --- Helper: Generate Default Keywords based on Birth Year ---
-export const generateDefaultKeywords = (birthYear: number) => {
-  const currentYear = new Date().getFullYear();
-  const age = currentYear - birthYear;
-  
-  const keywords = [`U${age}`];
-  
-  if (age <= 7) keywords.push("丙");
-  else if (age <= 9) keywords.push("乙");
-  else if (age <= 11) keywords.push("甲");
-  else if (age <= 13) keywords.push("少年"); // CHANGED: '少' -> '少年' to be more specific and avoid '少儿'
-
-  return keywords.join(",");
-};
 
 // 1. Get Game Full List (Internal or direct use)
 export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: SearchConfig): Promise<GameBasicInfo[]> => {
@@ -140,62 +138,72 @@ export const fetchAggregatedRankings = async (
   onProgress: (msg: string, progress: number) => void
 ): Promise<{source: 'CACHE' | 'LIVE', data: PlayerRank[], updatedAt?: string}> => {
   
-  // --- CACHE LAYER OPTIMIZATION ---
-  // Only check cache if the search is for Guangzhou/Guangdong
+  // --- TIER 1: CHECK MEMORY & SERVER FILE ---
+  // Only check cache if the search is for Guangzhou/Guangdong (Server DB limitation)
   if (searchConfig.city.includes('广州') || searchConfig.province.includes('广东')) {
       try {
-          onProgress("📡 正在尝试连接服务端离线数据库...", 5);
-          const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
-          const cacheRes = await fetch(`/daily_rankings.json?t=${hourTs}`); 
-          
-          if (cacheRes.ok) {
-              onProgress("📥 数据库下载完成，正在解析...", 15);
-              const cacheData = await cacheRes.json();
+          let sourceData: PlayerRank[] = [];
+          let updateTimeStr = '';
+
+          // A. Check In-Memory Cache first
+          if (MEMORY_CACHE.rankings && (Date.now() - MEMORY_CACHE.rankings.timestamp < MEMORY_CACHE_TTL)) {
+              onProgress("🧠 读取内存中的榜单数据...", 10);
+              sourceData = MEMORY_CACHE.rankings.data;
+              updateTimeStr = '刚刚 (内存)';
+          } else {
+              // B. Download Server File
+              onProgress("📡 正在从服务器下载离线榜单库 (daily_rankings.json)...", 5);
+              const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
+              const cacheRes = await fetch(`/daily_rankings.json?t=${hourTs}`); 
               
-              if (cacheData && Array.isArray(cacheData.data)) {
-                  // Check if the data is just an initialized empty shell
-                  if (cacheData.status === 'initializing' || (cacheData.data.length === 0 && cacheData.count === 0)) {
-                       onProgress("⏳ 服务端缓存文件正在初始化或为空，转为实时获取...", 10);
-                       throw new Error("Cache initializing"); 
+              if (cacheRes.ok) {
+                  const cacheData = await cacheRes.json();
+                  if (cacheData && Array.isArray(cacheData.data)) {
+                       if (cacheData.status === 'initializing' || (cacheData.data.length === 0 && cacheData.count === 0)) {
+                           onProgress("⏳ 服务端缓存文件初始化中，跳过...", 10);
+                       } else {
+                           sourceData = cacheData.data;
+                           updateTimeStr = new Date(cacheData.updatedAt).toLocaleString();
+                           // Save to Memory
+                           MEMORY_CACHE.rankings = { data: sourceData, timestamp: Date.now() };
+                           onProgress("📥 榜单库下载完毕，已缓存至内存。", 15);
+                       }
                   }
+              }
+          }
 
-                  const updateTimeStr = new Date(cacheData.updatedAt).toLocaleString();
-                  const totalCount = cacheData.data.length;
-                  onProgress(`✅ 解析成功 (${updateTimeStr} 更新)，正在筛选 ${totalCount} 条记录...`, 20);
+          // C. Filter Data (Query Logic)
+          if (sourceData.length > 0) {
+                  onProgress(`🔍 正在筛选 ${sourceData.length} 条记录...`, 20);
                   
-                  const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
-                  // Add Birth Year to search keys (e.g., "2018") to match "2018年组" which is common
-                  if (searchConfig.birthYear) {
-                      groupKeys.push(searchConfig.birthYear.toString());
-                  }
-
+                  const uKeys = searchConfig.uKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
+                  const levelKeys = searchConfig.levelKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
                   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
-                  
                   const gameKeywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
                   const nameRegex = gameKeywords.length > 0 ? new RegExp(gameKeywords.join('|'), 'i') : null;
                   
-                  const filtered = cacheData.data.filter((rank: PlayerRank) => {
-                       // 1. Filter by Game Name (Loose)
+                  const filtered = sourceData.filter((rank: PlayerRank) => {
                        if (nameRegex && !nameRegex.test(rank.game_name)) return false;
 
-                       // 2. Filter by Group Name (Case Insensitive)
                        const gName = (rank.groupName || '').toUpperCase();
-                       // Allow partial match: Match if NO group keywords selected OR if at least one matches
-                       // Note: Logic is now (U7 OR 丙 OR 2018)
-                       const matchGroup = groupKeys.length === 0 || groupKeys.some(k => gName.includes(k));
-                       if (!matchGroup) return false;
+                       const hasUFilters = uKeys.length > 0;
+                       const hasLevelFilters = levelKeys.length > 0;
+                       
+                       let groupMatched = true;
+                       if (hasUFilters || hasLevelFilters) {
+                          const matchesU = hasUFilters && uKeys.some(k => gName.includes(k));
+                          const matchesLevel = hasLevelFilters && levelKeys.every(k => gName.includes(k));
 
-                       // 3. Filter by Item Type (e.g. 男单) - ENHANCED LOGIC
-                       // Now checks GroupName, GameName AND potential hidden fields (itemType/itemName) from JSON
+                          if (hasUFilters && !hasLevelFilters) groupMatched = matchesU;
+                          else if (!hasUFilters && hasLevelFilters) groupMatched = matchesLevel;
+                          else groupMatched = matchesU || matchesLevel;
+                       }
+
+                       if (!groupMatched) return false;
+
                        if (typeKeys.length > 0) {
                            const rAny = rank as any;
-                           const fullText = (
-                               (rAny.groupName || '') + ' ' + 
-                               (rAny.game_name || '') + ' ' + 
-                               (rAny.itemType || '') + ' ' + 
-                               (rAny.itemName || '')
-                           ).toUpperCase();
-                           
+                           const fullText = ((rAny.groupName || '') + ' ' + (rAny.game_name || '') + ' ' + (rAny.itemType || '') + ' ' + (rAny.itemName || '')).toUpperCase();
                            const matchType = typeKeys.some(k => fullText.includes(k.toUpperCase())); 
                            if (!matchType) return false;
                        }
@@ -206,21 +214,17 @@ export const fetchAggregatedRankings = async (
                       onProgress(`🎉 离线库命中！提取到 ${filtered.length} 条数据 (无需访问 API)`, 100);
                       return { source: 'CACHE', data: filtered, updatedAt: updateTimeStr };
                   } else {
-                      // FALLBACK LOGIC: If cache has data but filters result in 0, we now try LIVE search
-                      onProgress(`⚠️ 离线库筛选结果为空 (共 ${totalCount} 条)，准备转入实时搜索模式以防遗漏...`, 10);
-                      // Do not return here, let it fall through to LIVE execution below
+                      onProgress(`⚠️ 离线库筛选结果为空，准备转入实时搜索模式...`, 10);
                   }
-              }
           }
       } catch (e) {
           console.log("Ranking cache miss or error", e);
-          // Only falls back if fetch itself failed (e.g. network error, 404) or thrown explicitly
       }
   } else {
-    onProgress("🌐 检测到非广州地区查询，将直接连接华体汇实时数据...", 5);
+    onProgress("🌐 检测到非广州地区查询，直接连接华体汇实时数据...", 5);
   }
 
-  // --- FALLBACK TO LIVE API ---
+  // --- TIER 3: LIVE API FALLBACK ---
   onProgress("🔎 正在扫描华体汇实时赛事列表...", 10);
   const games = await fetchGameList(config, searchConfig);
 
@@ -230,11 +234,8 @@ export const fetchAggregatedRankings = async (
 
   onProgress(`✅ 锁定 ${games.length} 个相关赛事，开始实时抓取...`, 15);
 
-  const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
-  // Add Birth Year to LIVE search as well
-  if (searchConfig.birthYear) {
-     groupKeys.push(searchConfig.birthYear.toString());
-  }
+  const uKeys = searchConfig.uKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
+  const levelKeys = searchConfig.levelKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
   
   let processedCount = 0;
@@ -262,13 +263,23 @@ export const fetchAggregatedRankings = async (
 
       const relevantItems = itemsData.detail.filter((item: any) => {
         const gName = (item.groupName || '').toUpperCase();
-        // Check BOTH itemType and itemName
         const iType = (item.itemType || item.itemName || '').toUpperCase(); 
         
-        // Logic: Match any Key in Group Name
-        const matchesGroup = groupKeys.some(k => gName.includes(k));
+        const hasUFilters = uKeys.length > 0;
+        const hasLevelFilters = levelKeys.length > 0;
+        let groupMatched = true;
+
+        if (hasUFilters || hasLevelFilters) {
+           const matchesU = hasUFilters && uKeys.some(k => gName.includes(k));
+           const matchesLevel = hasLevelFilters && levelKeys.every(k => gName.includes(k));
+           if (hasUFilters && !hasLevelFilters) groupMatched = matchesU;
+           else if (!hasUFilters && hasLevelFilters) groupMatched = matchesLevel;
+           else groupMatched = matchesU || matchesLevel;
+        }
+
+        if (!groupMatched) return false;
         const matchesType = typeKeys.length === 0 || typeKeys.some(k => iType.includes(k) || gName.includes(k));
-        return matchesGroup && matchesType;
+        return matchesType;
       });
 
       await Promise.all(relevantItems.map(async (item: any) => {
@@ -311,40 +322,49 @@ export const fetchAggregatedRankings = async (
 export const fetchPlayerMatches = async (
   config: ApiHeaderConfig,
   playerName: string,
-  // games: GameBasicInfo[], // Removed, now internal
-  searchConfig: SearchConfig, // Added to support fallback game fetch
+  searchConfig: SearchConfig, 
   onProgress: (msg: string, progress: number) => void
 ): Promise<MatchScoreResult[]> => {
   
-  // Normalize Search Term
   const targetName = playerName.trim().toLowerCase();
   
-  // --- CACHE LAYER OPTIMIZATION FOR MATCHES ---
-  // Only check cache if the search is for Guangzhou/Guangdong
+  // --- TIER 1: CHECK MEMORY & SERVER FILE ---
   const isCacheRegion = searchConfig.city.includes('广州') || searchConfig.province.includes('广东');
 
   if (isCacheRegion) {
     try {
-        onProgress("🚀 正在下载服务端比分数据库 (Daily Matches)...", 5);
-        const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
-        const cacheRes = await fetch(`/daily_matches.json?t=${hourTs}`);
-        
-        if (cacheRes.ok) {
-            onProgress("📥 数据库下载完成，正在本地索引...", 15);
-            const cacheData = await cacheRes.json();
-            
-            if (cacheData && Array.isArray(cacheData.data)) {
-                 // Check if the data is just an initialized empty shell
-                if (cacheData.status === 'initializing' || (cacheData.data.length === 0 && cacheData.count === 0)) {
-                       onProgress("⏳ 服务端比分库正在初始化，转为实时全网搜索...", 10);
-                       throw new Error("Cache initializing"); 
-                }
+        let sourceData: MatchScoreResult[] = [];
 
-                const totalRecords = cacheData.data.length;
-                onProgress(`✅ 数据库索引完毕 (共 ${totalRecords} 条记录)，正在查找 "${playerName}"...`, 20);
+        // A. Check In-Memory Cache First
+        if (MEMORY_CACHE.matches && (Date.now() - MEMORY_CACHE.matches.timestamp < MEMORY_CACHE_TTL)) {
+             onProgress("🧠 读取内存中的比分数据库...", 10);
+             sourceData = MEMORY_CACHE.matches.data;
+        } else {
+             // B. Download Server File to Memory
+             onProgress("🚀 正在下载服务端比分数据库 (daily_matches.json)...", 5);
+             const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
+             const cacheRes = await fetch(`/daily_matches.json?t=${hourTs}`);
+             
+             if (cacheRes.ok) {
+                 const cacheData = await cacheRes.json();
+                 if (cacheData && Array.isArray(cacheData.data)) {
+                    if (cacheData.status === 'initializing' || (cacheData.data.length === 0 && cacheData.count === 0)) {
+                         onProgress("⏳ 服务端比分库初始化中，跳过...", 10);
+                    } else {
+                         sourceData = cacheData.data;
+                         // Store to Memory Cache
+                         MEMORY_CACHE.matches = { data: sourceData, timestamp: Date.now() };
+                         onProgress(`📥 比分库下载完成，已缓存至内存 (共 ${sourceData.length} 条)。`, 15);
+                    }
+                 }
+             }
+        }
+
+        // C. Filter (Query Logic)
+        if (sourceData.length > 0) {
+                onProgress(`🔎 正在离线库中检索 "${playerName}"...`, 20);
                 
-                // Filter locally with loose matching AND Gender filtering
-                const hits = cacheData.data.filter((m: MatchScoreResult) => {
+                const hits = sourceData.filter((m: MatchScoreResult) => {
                     const pA = (m.playerA || '').toLowerCase();
                     const pB = (m.playerB || '').toLowerCase();
                     const nameMatch = pA.includes(targetName) || pB.includes(targetName);
@@ -354,8 +374,6 @@ export const fetchPlayerMatches = async (
                     // Gender Filter Logic
                     if (searchConfig.playerGender) {
                        const fullText = (m.groupName + (m.itemType || '')).toUpperCase();
-                       // Use negative filtering: If 'M' selected, exclude 'Female' indicators. If 'F' selected, exclude 'Male' indicators.
-                       // This handles "Mixed" doubles better and is safer than requiring explicit match.
                        if (searchConfig.playerGender === 'M') {
                            if (fullText.includes('女') || fullText.includes('WOMEN') || fullText.includes('GIRL')) return false;
                        } else if (searchConfig.playerGender === 'F') {
@@ -369,11 +387,8 @@ export const fetchPlayerMatches = async (
                     onProgress(`🎉 离线库检索成功！找到 ${hits.length} 场记录`, 100);
                     return hits;
                 } else {
-                    // FALLBACK LOGIC: If not found in cache, fall through to LIVE
-                    onProgress(`⚠️ 离线库未找到 "${playerName}" (已查阅 ${totalRecords} 条)。正在转为全网实时搜索...`, 10);
-                    // Do NOT return empty array here
+                    onProgress(`⚠️ 离线库未找到 "${playerName}"。正在转为全网实时搜索...`, 10);
                 }
-            }
         }
     } catch(e) {
         console.log("Match cache miss, falling back to live", e);
@@ -382,7 +397,7 @@ export const fetchPlayerMatches = async (
     onProgress("🌐 检测到非广州地区查询，跳过离线库，准备启动全网搜索...", 5);
   }
 
-  // --- FALLBACK TO LIVE API ---
+  // --- TIER 3: LIVE API FALLBACK ---
   onProgress("🔎 正在扫描华体汇实时赛事列表...", 10);
   const games = await fetchGameList(config, searchConfig);
 
@@ -436,12 +451,10 @@ export const fetchPlayerMatches = async (
           // Double check filtering locally
           if (!p1.toLowerCase().includes(targetName) && !p2.toLowerCase().includes(targetName)) return; 
 
-          // Apply Gender Filter
           if (searchConfig.playerGender) {
              const groupName = m.fullName || m.groupName || '';
              const itemType = m.itemType || m.itemName || '';
              const fullText = (groupName + itemType).toUpperCase();
-             
              if (searchConfig.playerGender === 'M') {
                  if (fullText.includes('女') || fullText.includes('WOMEN') || fullText.includes('GIRL')) return;
              } else if (searchConfig.playerGender === 'F') {

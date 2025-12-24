@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { ApiHeaderConfig, SearchConfig, StepStatus, UserCredentials } from '../types';
 import { Calendar, Search, ChevronDown, ChevronUp, Trophy, UserSearch, RefreshCw, Trash2, RotateCcw, AlertTriangle, Filter, Tag, XCircle } from 'lucide-react';
-import { generateDefaultKeywords } from '../services/huaTiHuiService';
+// removed generateDefaultKeywords import
 
 interface Props {
   config: ApiHeaderConfig;
@@ -24,7 +24,8 @@ interface Props {
 
 const GROUP_SECTIONS = [
   {
-    title: 'U系列 (年龄)',
+    id: 'u_series',
+    title: 'U系列 (年龄) - [或/OR关系]',
     options: [
       { label: 'U7', value: 'U7' },
       { label: 'U8', value: 'U8' },
@@ -39,7 +40,8 @@ const GROUP_SECTIONS = [
     ]
   },
   {
-    title: '学段 / 级别',
+    id: 'level',
+    title: '学段 / 级别 - [且/AND关系]',
     options: [
       { label: '儿童/小学', value: '儿童,小学' },
       { label: '少年', value: '少年' },
@@ -93,18 +95,8 @@ const ConfigPanel: React.FC<Props> = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
   
-  // Auto-init defaults
-  useEffect(() => {
-    if (!searchConfig.groupKeywords) {
-        const keywords = generateDefaultKeywords(searchConfig.birthYear);
-        onSearchConfigChange('groupKeywords', keywords);
-    }
-  }, [searchConfig.birthYear]);
-
-  const currentAge = new Date().getFullYear() - searchConfig.birthYear;
-
-  // Keyword Toggler
-  const toggleKeyword = (field: 'groupKeywords' | 'itemKeywords', valueString: string) => {
+  // Keyword Toggler (Now handles uKeywords vs levelKeywords based on sectionId)
+  const toggleKeyword = (field: 'itemKeywords' | 'uKeywords' | 'levelKeywords', valueString: string) => {
     const currentStr = searchConfig[field] || '';
     const currentParts = new Set(currentStr.split(/[,，]/).map(s => s.trim()).filter(s => s));
     const newValues = valueString.split(/[,，]/).map(s => s.trim());
@@ -121,7 +113,7 @@ const ConfigPanel: React.FC<Props> = ({
     onSearchConfigChange(field, Array.from(currentParts).join(','));
   };
 
-  const isKeywordActive = (field: 'groupKeywords' | 'itemKeywords', valueString: string) => {
+  const isKeywordActive = (field: 'itemKeywords' | 'uKeywords' | 'levelKeywords', valueString: string) => {
      const currentStr = searchConfig[field] || '';
      const currentParts = currentStr.split(/[,，]/).map(s => s.trim().toUpperCase());
      const targetParts = valueString.split(/[,，]/).map(s => s.trim().toUpperCase());
@@ -139,6 +131,17 @@ const ConfigPanel: React.FC<Props> = ({
     if (!isItemOpen) setIsGroupOpen(false); // Close other
     setIsItemOpen(!isItemOpen);
   };
+
+  const getCombinedGroupText = () => {
+    const u = searchConfig.uKeywords;
+    const l = searchConfig.levelKeywords;
+    if (!u && !l) return '';
+    if (u && !l) return u;
+    if (!u && l) return l;
+    return `${u} + ${l}`;
+  };
+
+  const combinedGroupText = getCombinedGroupText();
 
   return (
     // Removed overflow-hidden to allow dropdowns to float over siblings
@@ -216,22 +219,7 @@ const ConfigPanel: React.FC<Props> = ({
         {/* PART B: Rankings Search */}
         {activeTab === 'rank' && (
           <div className="space-y-5 animate-fade-in relative z-20">
-            {/* Age */}
-            <div className="bg-blue-50/30 p-3 rounded-2xl border border-blue-100/50">
-               <label className="block text-xs font-bold text-slate-400 mb-1 ml-1 flex justify-between">
-                 <span>出生年份</span>
-                 <span className="text-kid-blue">U{currentAge} ({currentAge}岁)</span>
-               </label>
-               <div className="relative">
-                 <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-kid-blue" />
-                 <input
-                   type="number"
-                   value={searchConfig.birthYear}
-                   onChange={(e) => onSearchConfigChange('birthYear', Number(e.target.value))}
-                   className="w-full pl-9 px-3 py-2 bg-white border border-blue-200 rounded-xl text-sm focus:outline-none focus:border-kid-blue font-bold text-slate-700 shadow-sm"
-                 />
-               </div>
-            </div>
+            {/* Removed Age (Birth Year) Filter */}
 
             {/* Group Filter Dropdown */}
             {/* Increased Z-index to 50 for open state to guarantee it sits above everything */}
@@ -245,17 +233,18 @@ const ConfigPanel: React.FC<Props> = ({
                  className={`w-full text-left px-4 py-3 bg-white border rounded-xl text-sm font-medium text-slate-700 shadow-sm flex justify-between items-center transition-all ${isGroupOpen ? 'border-kid-primary ring-2 ring-kid-primary/10' : 'border-slate-200 hover:border-kid-primary/50'}`}
                >
                  <span className="truncate pr-4">
-                   {searchConfig.groupKeywords 
-                      ? <span className="text-slate-800 font-bold">{searchConfig.groupKeywords}</span> 
+                   {combinedGroupText
+                      ? <span className="text-slate-800 font-bold">{combinedGroupText}</span> 
                       : <span className="text-slate-400">全部组别 (不限)</span>
                    }
                  </span>
                  <div className="flex items-center gap-2">
-                    {searchConfig.groupKeywords && (
+                    {combinedGroupText && (
                         <div 
                           onClick={(e) => {
                              e.stopPropagation();
-                             onSearchConfigChange('groupKeywords', '');
+                             onSearchConfigChange('uKeywords', '');
+                             onSearchConfigChange('levelKeywords', '');
                           }}
                           className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
                         >
@@ -271,13 +260,14 @@ const ConfigPanel: React.FC<Props> = ({
                     {GROUP_SECTIONS.map((section, idx) => (
                       <div key={idx} className="mb-4 last:mb-0">
                          <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1 tracking-wider">{section.title}</h4>
-                         <div className={`grid gap-2 ${section.title.includes('U系列') ? 'grid-cols-5' : 'grid-cols-3'}`}>
+                         <div className={`grid gap-2 ${section.id === 'u_series' ? 'grid-cols-5' : 'grid-cols-3'}`}>
                             {section.options.map(opt => {
-                               const isActive = isKeywordActive('groupKeywords', opt.value);
+                               const targetField = section.id === 'u_series' ? 'uKeywords' : 'levelKeywords';
+                               const isActive = isKeywordActive(targetField, opt.value);
                                return (
                                  <button
                                    key={opt.label}
-                                   onClick={() => toggleKeyword('groupKeywords', opt.value)}
+                                   onClick={() => toggleKeyword(targetField, opt.value)}
                                    className={`text-xs py-2 px-1 rounded-lg transition-all active:scale-95 font-medium border ${
                                      isActive 
                                        ? 'bg-kid-primary text-white border-kid-primary shadow-md shadow-indigo-100' 

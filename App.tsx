@@ -10,7 +10,7 @@ import ReactMarkdown from 'react-markdown';
 
 // --- CONSTANTS FOR PERSISTENCE ---
 const STORAGE_KEY_CONFIG = 'hth_config_v1';
-const STORAGE_KEY_SEARCH = 'hth_search_v1';
+const STORAGE_KEY_SEARCH = 'hth_search_v2'; // Bumped version for new schema
 const STORAGE_KEY_CREDS = 'hth_creds_v1';
 const STORAGE_PREFIX_CACHE = 'hth_cache_';
 const CACHE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 Hours
@@ -26,11 +26,11 @@ const INITIAL_CREDENTIALS: UserCredentials = {
 };
 
 const INITIAL_SEARCH_CONFIG: SearchConfig = {
-  birthYear: 2017, // 8 years old in 2025
   province: "广东省",
   city: "广州市",
-  gameKeywords: "", // CHANGED: Empty by default to avoid filtering out valid games
-  groupKeywords: 'U8,乙',
+  gameKeywords: "", 
+  uKeywords: 'U8', // Default U-series
+  levelKeywords: '', // Default Level
   itemKeywords: '男单',
   targetPlayerName: ''
 };
@@ -148,7 +148,17 @@ export const App: React.FC = () => {
         if (savedConfig) loadedConfig = { ...loadedConfig, ...JSON.parse(savedConfig) };
 
         const savedSearch = localStorage.getItem(STORAGE_KEY_SEARCH);
-        if (savedSearch) loadedSearch = { ...loadedSearch, ...JSON.parse(savedSearch) };
+        // Deep merge logic to handle new fields if migrating from old version
+        if (savedSearch) {
+             const parsed = JSON.parse(savedSearch);
+             loadedSearch = { 
+                 ...loadedSearch, 
+                 ...parsed,
+                 // Ensure new fields exist if loading old data
+                 uKeywords: parsed.uKeywords !== undefined ? parsed.uKeywords : 'U8',
+                 levelKeywords: parsed.levelKeywords !== undefined ? parsed.levelKeywords : ''
+             };
+        }
 
         const savedCreds = localStorage.getItem(STORAGE_KEY_CREDS);
         if (savedCreds) loadedCreds = { ...loadedCreds, ...JSON.parse(savedCreds) };
@@ -269,7 +279,7 @@ export const App: React.FC = () => {
     }
 
     // CHECK BROWSER LOCAL STORAGE CACHE FIRST
-    const cacheKey = getCacheKey('rankings', `${searchConfig.province}_${searchConfig.city}_${searchConfig.birthYear}_${searchConfig.gameKeywords}_${searchConfig.groupKeywords}_${searchConfig.itemKeywords}`);
+    const cacheKey = getCacheKey('rankings', `${searchConfig.province}_${searchConfig.city}_${searchConfig.uKeywords}_${searchConfig.levelKeywords}_${searchConfig.gameKeywords}_${searchConfig.itemKeywords}`);
     const localCachedData = loadFromCache<PlayerRank[]>(cacheKey);
 
     setStatus(StepStatus.LOADING);
@@ -326,7 +336,7 @@ export const App: React.FC = () => {
       if (result.data.length > 0) {
         addLog(`🎉 大功告成！获取到 ${result.data.length} 条排名数据。`, "success");
       } else {
-        addLog(`📭 本次查询未找到数据 (年份/组别不匹配 或 赛事未录入)。`, "info");
+        addLog(`📭 本次查询未找到数据 (组别不匹配 或 赛事未录入)。`, "info");
       }
       
       setStatus(StepStatus.COMPLETE);
@@ -352,7 +362,7 @@ export const App: React.FC = () => {
     const safePlayerName = targetName as string;
 
     // CHECK CACHE
-    const cacheKey = getCacheKey('matches', `${safePlayerName}_${searchConfig.province}_${searchConfig.birthYear}`);
+    const cacheKey = getCacheKey('matches', `${safePlayerName}_${searchConfig.province}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
 
     setStatus(StepStatus.LOADING);
@@ -410,7 +420,7 @@ export const App: React.FC = () => {
     setLastCacheTime('');
     setHasAuthError(false);
     
-    const cacheKey = getCacheKey('matches', `${playerName}_${searchConfig.province}_${searchConfig.birthYear}`);
+    const cacheKey = getCacheKey('matches', `${playerName}_${searchConfig.province}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
 
     if (cachedData && cachedData.length > 0) {
@@ -568,9 +578,12 @@ export const App: React.FC = () => {
               <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">
                 羽毛球<span className="text-kid-primary">未来之星</span>数据站
               </h1>
-              <p className="text-slate-500 font-medium mt-1">
-                追踪成长每一步 • U{new Date().getFullYear() - searchConfig.birthYear} 组别专属
-              </p>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-base font-bold bg-gradient-to-r from-kid-primary to-kid-accent bg-clip-text text-transparent">
+                  挥洒汗水，快乐成长！
+                </span>
+                <Shuttlecock className="w-6 h-6 text-kid-primary transform rotate-12" />
+              </div>
             </div>
           </div>
           <div className="flex gap-2 text-sm font-bold text-slate-400 bg-slate-50/80 px-4 py-2 rounded-2xl">
