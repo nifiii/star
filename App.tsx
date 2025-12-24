@@ -279,7 +279,8 @@ export const App: React.FC = () => {
     }
 
     // CHECK BROWSER LOCAL STORAGE CACHE FIRST
-    const cacheKey = getCacheKey('rankings', `${searchConfig.province}_${searchConfig.city}_${searchConfig.uKeywords}_${searchConfig.levelKeywords}_${searchConfig.gameKeywords}_${searchConfig.itemKeywords}`);
+    // FIX: Added targetPlayerName to cache key to ensure filtering by name updates results
+    const cacheKey = getCacheKey('rankings', `${searchConfig.province}_${searchConfig.city}_${searchConfig.uKeywords}_${searchConfig.levelKeywords}_${searchConfig.gameKeywords}_${searchConfig.itemKeywords}_${searchConfig.targetPlayerName}`);
     const localCachedData = loadFromCache<PlayerRank[]>(cacheKey);
 
     setStatus(StepStatus.LOADING);

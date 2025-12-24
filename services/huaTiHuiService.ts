@@ -220,7 +220,19 @@ export const fetchAggregatedRankings = async (
       const targetName = (searchConfig.targetPlayerName || '').trim();
 
       const filtered = sourceData.filter((rank: PlayerRank) => {
+           // 1. 赛事名称筛选 (始终生效)
            if (nameRegex && !nameRegex.test(rank.game_name)) return false;
+
+           // 2. 名字搜索优先策略 (关键修改)
+           // 如果用户输入了名字，则忽略 组别/项目 筛选。
+           // 原因：本地缓存的数据源可能不包含完整的项目信息 (例如 groupName 只有 "U8" 而没有 "男单")
+           // 用户搜名字时，通常希望看到该选手所有的记录，而不受默认筛选器 (如默认选中的"男单") 的干扰。
+           if (targetName) {
+               return rank.playerName.includes(targetName);
+           }
+
+           // 3. 常规筛选 (仅当未输入名字时执行)
+           // 检查组别、项目等
            if (targetName && !rank.playerName.includes(targetName)) return false;
 
            const gName = (rank.groupName || '').toUpperCase();
@@ -294,6 +306,9 @@ export const fetchAggregatedRankings = async (
       if (!itemsData?.detail) return [];
 
       // 2. Filter Items (Client side optimization to reduce requests)
+      // 注意：如果是网络实时搜索，这里我们仍然保留一定的组别过滤，以防止请求量过大。
+      // 如果用户搜名字但没搜到，可能是因为这里的 item 过滤太严格了。
+      // 但对于大多数情况，保持现状可以平衡性能。
       const relevantItems = itemsData.detail.filter((item: any) => {
         const gName = (item.groupName || '').toUpperCase();
         const iType = (item.itemType || item.itemName || '').toUpperCase(); 
