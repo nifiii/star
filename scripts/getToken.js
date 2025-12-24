@@ -310,10 +310,13 @@ async function fetchRankingsForGame(game) {
             
             if (rankData?.detail) {
                 rankData.detail.forEach(r => {
+                    // FIX: Capture Item Type in GroupName for easier filtering later
+                    const extendedGroupName = `${item.groupName} ${item.itemName || item.itemType || ''}`.trim();
+                    
                     allRanks.push({
                         raceId: game.id,
                         game_name: game.game_name,
-                        groupName: item.groupName,
+                        groupName: extendedGroupName, 
                         playerName: r.playerName,
                         rank: r.rank,
                         score: r.score,
@@ -532,7 +535,7 @@ function scheduleNextRun() {
 // --- Entry Point ---
 
 (async () => {
-    console.log("🟢 脚本启动 (v1.0.2 - Fix syntax error)...");
+    console.log("🟢 脚本启动 (v1.0.3 - Enhanced Item Capture)...");
     
     // 1. 初始化环境 (目录 & 链接)
     initEnvironment();

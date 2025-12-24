@@ -20,6 +20,7 @@ export interface SearchConfig {
   groupKeywords: string; // Comma separated, e.g. "U8,乙B"
   itemKeywords: string; // Comma separated, e.g. "男单"
   targetPlayerName?: string; // New: For direct search
+  playerGender?: 'M' | 'F' | null; // New: Gender filter for player search
 }
 
 export interface GameBasicInfo {

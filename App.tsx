@@ -307,9 +307,9 @@ export const App: React.FC = () => {
         searchConfig,
         (msg, prog) => {
            setProgress(prog);
-           // Only log significant milestones to avoid spamming the log viewer
+           // Restore detailed logs so user sees what's happening
            if (prog === 5 || prog === 15 || prog === 100 || msg.includes('实时')) {
-             // Optional: addLog(msg, "info"); 
+              addLog(msg, "info"); 
            }
         }
       );

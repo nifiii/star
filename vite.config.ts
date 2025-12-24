@@ -21,5 +21,16 @@ export default defineConfig(({ mode }) => {
       // Polyfill process.env for other libraries if needed
       'process.env': {}
     },
+    // Add Proxy for Local Development to match Nginx behavior
+    server: {
+      proxy: {
+        '/google-ai': {
+          target: 'https://generativelanguage.googleapis.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/google-ai/, ''),
+          secure: false
+        }
+      }
+    }
   };
 });

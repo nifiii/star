@@ -160,7 +160,8 @@ export const fetchAggregatedRankings = async (
                   }
 
                   const updateTimeStr = new Date(cacheData.updatedAt).toLocaleString();
-                  onProgress(`✅ 解析成功 (${updateTimeStr} 更新)，正在筛选...`, 20);
+                  const totalCount = cacheData.data.length;
+                  onProgress(`✅ 解析成功 (${updateTimeStr} 更新)，正在筛选 ${totalCount} 条记录...`, 20);
                   
                   const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
                   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
@@ -178,9 +179,11 @@ export const fetchAggregatedRankings = async (
                        const matchGroup = groupKeys.length === 0 || groupKeys.some(k => gName.includes(k));
                        if (!matchGroup) return false;
 
-                       // 3. Filter by Item Type (e.g. 男单)
+                       // 3. Filter by Item Type (e.g. 男单) - ENHANCED LOGIC
+                       // Now checks both GroupName AND GameName because existing data might lack specific itemType field
                        if (typeKeys.length > 0) {
-                           const matchType = typeKeys.some(k => gName.includes(k.toUpperCase())); 
+                           const fullText = (gName + ' ' + rank.game_name).toUpperCase();
+                           const matchType = typeKeys.some(k => fullText.includes(k.toUpperCase())); 
                            if (!matchType) return false;
                        }
                        return true;
@@ -191,7 +194,7 @@ export const fetchAggregatedRankings = async (
                   if (filtered.length > 0) {
                       onProgress(`🎉 离线库命中！提取到 ${filtered.length} 条数据 (无需访问 API)`, 100);
                   } else {
-                      onProgress(`⚠️ 离线库已加载，但未找到符合条件的数据 (共搜索了 ${cacheData.data.length} 条记录)。请检查筛选条件。`, 100);
+                      onProgress(`⚠️ 离线库已加载 ${totalCount} 条，但筛选后为 0 条。建议清空“项目”栏重试。`, 100);
                   }
                   return { source: 'CACHE', data: filtered, updatedAt: updateTimeStr };
               }
@@ -320,11 +323,26 @@ export const fetchPlayerMatches = async (
                 const totalRecords = cacheData.data.length;
                 onProgress(`✅ 数据库索引完毕 (共 ${totalRecords} 条记录)，正在查找 "${playerName}"...`, 20);
                 
-                // Filter locally with loose matching
+                // Filter locally with loose matching AND Gender filtering
                 const hits = cacheData.data.filter((m: MatchScoreResult) => {
                     const pA = (m.playerA || '').toLowerCase();
                     const pB = (m.playerB || '').toLowerCase();
-                    return pA.includes(targetName) || pB.includes(targetName);
+                    const nameMatch = pA.includes(targetName) || pB.includes(targetName);
+                    
+                    if (!nameMatch) return false;
+                    
+                    // Gender Filter Logic
+                    if (searchConfig.playerGender) {
+                       const fullText = (m.groupName + (m.itemType || '')).toUpperCase();
+                       // Use negative filtering: If 'M' selected, exclude 'Female' indicators. If 'F' selected, exclude 'Male' indicators.
+                       // This handles "Mixed" doubles better and is safer than requiring explicit match.
+                       if (searchConfig.playerGender === 'M') {
+                           if (fullText.includes('女') || fullText.includes('WOMEN') || fullText.includes('GIRL')) return false;
+                       } else if (searchConfig.playerGender === 'F') {
+                           if (fullText.includes('男') || fullText.includes('MEN') || fullText.includes('BOY')) return false;
+                       }
+                    }
+                    return true;
                 });
                 
                 // STRICT LOGIC: Trust the cache.
@@ -397,6 +415,19 @@ export const fetchPlayerMatches = async (
 
           // Double check filtering locally
           if (!p1.toLowerCase().includes(targetName) && !p2.toLowerCase().includes(targetName)) return; 
+
+          // Apply Gender Filter
+          if (searchConfig.playerGender) {
+             const groupName = m.fullName || m.groupName || '';
+             const itemType = m.itemType || m.itemName || '';
+             const fullText = (groupName + itemType).toUpperCase();
+             
+             if (searchConfig.playerGender === 'M') {
+                 if (fullText.includes('女') || fullText.includes('WOMEN') || fullText.includes('GIRL')) return;
+             } else if (searchConfig.playerGender === 'F') {
+                 if (fullText.includes('男') || fullText.includes('MEN') || fullText.includes('BOY')) return;
+             }
+          }
 
           let finalScore = "0:0";
           let statusLabel = "";
