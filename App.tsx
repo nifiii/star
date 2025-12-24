@@ -202,8 +202,15 @@ export const App: React.FC = () => {
     }
   };
 
-  const saveToCache = <T,>(key: string, data: T) => {
+  const saveToCache = <T extends any[]>(key: string, data: T) => {
     try {
+      // FIX: Do not cache empty arrays. This prevents "No Results" errors from being persistent.
+      // If a search fails to find data, we should allow retries without manual cache clearing.
+      if (data.length === 0) {
+        localStorage.removeItem(key); // Ensure no stale empty cache exists
+        return; 
+      }
+
       const cacheObj: DataCache<T> = {
         data,
         timestamp: Date.now(),
@@ -262,7 +269,7 @@ export const App: React.FC = () => {
     }
 
     // CHECK BROWSER LOCAL STORAGE CACHE FIRST
-    const cacheKey = getCacheKey('rankings', `${searchConfig.province}_${searchConfig.city}_${searchConfig.birthYear}_${searchConfig.gameKeywords}_${searchConfig.groupKeywords}`);
+    const cacheKey = getCacheKey('rankings', `${searchConfig.province}_${searchConfig.city}_${searchConfig.birthYear}_${searchConfig.gameKeywords}_${searchConfig.groupKeywords}_${searchConfig.itemKeywords}`);
     const localCachedData = loadFromCache<PlayerRank[]>(cacheKey);
 
     setStatus(StepStatus.LOADING);
@@ -275,7 +282,9 @@ export const App: React.FC = () => {
     setLastCacheTime('');
     setHasAuthError(false);
 
-    if (localCachedData) {
+    // FIX: Only use cache if it actually contains data.
+    // If cache is empty ([]), we force a fresh fetch to ensure it wasn't a false negative.
+    if (localCachedData && localCachedData.length > 0) {
       addLog("⚡ 发现有效的本地浏览器缓存，正在加载...", "success");
       setTimeout(() => {
         setRankings(localCachedData);
@@ -284,6 +293,10 @@ export const App: React.FC = () => {
         setStatus(StepStatus.COMPLETE);
       }, 500); 
       return;
+    } else if (localCachedData && localCachedData.length === 0) {
+        addLog("🧹 本地缓存结果为空，正在重新向服务器确认...", "info");
+        // Remove the empty cache so next time we are clean
+        localStorage.removeItem(cacheKey); 
     }
 
     try {
@@ -307,9 +320,15 @@ export const App: React.FC = () => {
           time: result.updatedAt 
       });
 
+      // Save to cache (internally handles checking for empty array)
       saveToCache(cacheKey, result.data);
 
-      addLog(`🎉 大功告成！获取到 ${result.data.length} 条排名数据。`, "success");
+      if (result.data.length > 0) {
+        addLog(`🎉 大功告成！获取到 ${result.data.length} 条排名数据。`, "success");
+      } else {
+        addLog(`📭 本次查询未找到数据 (年份/组别不匹配 或 赛事未录入)。`, "info");
+      }
+      
       setStatus(StepStatus.COMPLETE);
 
     } catch (e: any) {
@@ -347,7 +366,7 @@ export const App: React.FC = () => {
     setProgress(0);
     setLastCacheTime('');
 
-    if (cachedData) {
+    if (cachedData && cachedData.length > 0) {
       addLog("⚡ 发现小选手的历史缓存，正在加载...", "success");
       setTimeout(() => {
         setMatchHistory(cachedData);
@@ -394,7 +413,7 @@ export const App: React.FC = () => {
     const cacheKey = getCacheKey('matches', `${playerName}_${searchConfig.province}_${searchConfig.birthYear}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
 
-    if (cachedData) {
+    if (cachedData && cachedData.length > 0) {
       setMatchHistory(cachedData);
       setStatus(StepStatus.COMPLETE);
       return;

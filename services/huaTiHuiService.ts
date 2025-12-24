@@ -141,6 +141,7 @@ export const fetchAggregatedRankings = async (
 ): Promise<{source: 'CACHE' | 'LIVE', data: PlayerRank[], updatedAt?: string}> => {
   
   // --- CACHE LAYER OPTIMIZATION ---
+  // Only check cache if the search is for Guangzhou/Guangdong
   if (searchConfig.city.includes('广州') || searchConfig.province.includes('广东')) {
       try {
           onProgress("📡 正在尝试连接服务端离线数据库...", 5);
@@ -151,7 +152,13 @@ export const fetchAggregatedRankings = async (
               onProgress("📥 数据库下载完成，正在解析...", 15);
               const cacheData = await cacheRes.json();
               
-              if (cacheData && Array.isArray(cacheData.data) && cacheData.data.length > 0) {
+              if (cacheData && Array.isArray(cacheData.data)) {
+                  // Check if the data is just an initialized empty shell
+                  if (cacheData.status === 'initializing' || (cacheData.data.length === 0 && cacheData.count === 0)) {
+                       onProgress("⏳ 服务端缓存文件正在初始化或为空，转为实时获取...", 10);
+                       throw new Error("Cache initializing"); 
+                  }
+
                   const updateTimeStr = new Date(cacheData.updatedAt).toLocaleString();
                   onProgress(`✅ 解析成功 (${updateTimeStr} 更新)，正在筛选...`, 20);
                   
@@ -179,22 +186,26 @@ export const fetchAggregatedRankings = async (
                        return true;
                   });
 
+                  // STRICT LOGIC: If cache loaded successfully for Guangzhou, we trust it completely.
+                  // We do NOT fall back to live crawling if the cache is empty or filtering returns nothing.
                   if (filtered.length > 0) {
                       onProgress(`🎉 离线库命中！提取到 ${filtered.length} 条数据 (无需访问 API)`, 100);
-                      return { source: 'CACHE', data: filtered, updatedAt: updateTimeStr };
                   } else {
-                      console.log("Cache loaded but filtered result is empty. Debug:", { groupKeys, typeKeys, sample: cacheData.data[0] });
-                      onProgress("⚠️ 离线库中未找到符合条件的数据 (可能筛选条件过严)，转入实时抓取模式...", 10);
+                      onProgress(`⚠️ 离线库已加载，但未找到符合条件的数据 (共搜索了 ${cacheData.data.length} 条记录)。请检查筛选条件。`, 100);
                   }
+                  return { source: 'CACHE', data: filtered, updatedAt: updateTimeStr };
               }
           }
       } catch (e) {
           console.log("Ranking cache miss or error", e);
+          // Only falls back if fetch itself failed (e.g. network error, 404) or thrown explicitly
       }
+  } else {
+    onProgress("🌐 检测到非广州地区查询，将直接连接华体汇实时数据...", 5);
   }
 
   // --- FALLBACK TO LIVE API ---
-  onProgress("🔎 离线数据不可用，正在扫描华体汇实时赛事列表...", 10);
+  onProgress("🔎 正在扫描华体汇实时赛事列表...", 10);
   const games = await fetchGameList(config, searchConfig);
 
   if (games.length === 0) {
@@ -284,46 +295,57 @@ export const fetchPlayerMatches = async (
   
   // Normalize Search Term
   const targetName = playerName.trim().toLowerCase();
-
+  
   // --- CACHE LAYER OPTIMIZATION FOR MATCHES ---
-  // Try to load full match history from daily static file first
-  try {
-      onProgress("🚀 正在下载服务端比分数据库 (Daily Matches)...", 5);
-      const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
-      const cacheRes = await fetch(`/daily_matches.json?t=${hourTs}`);
-      
-      if (cacheRes.ok) {
-          onProgress("📥 数据库下载完成，正在本地索引...", 15);
-          const cacheData = await cacheRes.json();
-          
-          if (cacheData && Array.isArray(cacheData.data) && cacheData.data.length > 0) {
-              const totalRecords = cacheData.data.length;
-              onProgress(`✅ 数据库索引完毕 (共 ${totalRecords} 条记录)，正在查找 "${playerName}"...`, 20);
-              
-              // Filter locally with loose matching
-              const hits = cacheData.data.filter((m: MatchScoreResult) => {
-                  const pA = (m.playerA || '').toLowerCase();
-                  const pB = (m.playerB || '').toLowerCase();
-                  return pA.includes(targetName) || pB.includes(targetName);
-              });
-              
-              if (hits.length > 0) {
-                  onProgress(`🎉 离线库检索成功！找到 ${hits.length} 场记录`, 100);
-                  // Return sorted by date (if possible, currently matchTime is a string, assuming fetch order is roughly chronological)
-                  return hits;
-              } else {
-                  // Explicit warning that we are falling back
-                  console.log(`Cache miss for player: ${targetName}. Total records scanned: ${totalRecords}`);
-                  onProgress(`⚠️ 离线库未收录 "${playerName}"，准备启动全网搜索 (较慢)...`, 10);
-              }
-          }
-      }
-  } catch(e) {
-      console.log("Match cache miss, falling back to live", e);
+  // Only check cache if the search is for Guangzhou/Guangdong
+  const isCacheRegion = searchConfig.city.includes('广州') || searchConfig.province.includes('广东');
+
+  if (isCacheRegion) {
+    try {
+        onProgress("🚀 正在下载服务端比分数据库 (Daily Matches)...", 5);
+        const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
+        const cacheRes = await fetch(`/daily_matches.json?t=${hourTs}`);
+        
+        if (cacheRes.ok) {
+            onProgress("📥 数据库下载完成，正在本地索引...", 15);
+            const cacheData = await cacheRes.json();
+            
+            if (cacheData && Array.isArray(cacheData.data)) {
+                 // Check if the data is just an initialized empty shell
+                if (cacheData.status === 'initializing' || (cacheData.data.length === 0 && cacheData.count === 0)) {
+                       onProgress("⏳ 服务端比分库正在初始化，转为实时全网搜索...", 10);
+                       throw new Error("Cache initializing"); 
+                }
+
+                const totalRecords = cacheData.data.length;
+                onProgress(`✅ 数据库索引完毕 (共 ${totalRecords} 条记录)，正在查找 "${playerName}"...`, 20);
+                
+                // Filter locally with loose matching
+                const hits = cacheData.data.filter((m: MatchScoreResult) => {
+                    const pA = (m.playerA || '').toLowerCase();
+                    const pB = (m.playerB || '').toLowerCase();
+                    return pA.includes(targetName) || pB.includes(targetName);
+                });
+                
+                // STRICT LOGIC: Trust the cache.
+                if (hits.length > 0) {
+                    onProgress(`🎉 离线库检索成功！找到 ${hits.length} 场记录`, 100);
+                    return hits;
+                } else {
+                    onProgress(`⚠️ 离线库已包含 ${totalRecords} 场比赛，但未找到 "${playerName}" 的记录。停止搜索 (因为限定为广州地区)。`, 100);
+                    return [];
+                }
+            }
+        }
+    } catch(e) {
+        console.log("Match cache miss, falling back to live", e);
+    }
+  } else {
+    onProgress("🌐 检测到非广州地区查询，跳过离线库，准备启动全网搜索...", 5);
   }
 
   // --- FALLBACK TO LIVE API ---
-  onProgress("🔎 离线库未命中，正在扫描华体汇实时赛事列表...", 10);
+  onProgress("🔎 正在扫描华体汇实时赛事列表...", 10);
   const games = await fetchGameList(config, searchConfig);
 
   if (games.length === 0) return [];
