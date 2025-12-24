@@ -158,7 +158,7 @@ const ConfigPanel: React.FC<Props> = ({
           }`}
         >
           <UserSearch className={`w-4 h-4 ${activeTab === 'player' ? 'text-kid-orange' : ''}`} />
-          查小选手
+          过往比赛
           {activeTab === 'player' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-kid-orange mx-8 rounded-t-full"></div>}
         </button>
         <button
@@ -358,7 +358,7 @@ const ConfigPanel: React.FC<Props> = ({
                 <span className={`p-1.5 rounded-full ${showAdvanced ? 'bg-kid-primary/10' : 'bg-slate-100 group-hover:bg-kid-primary/10'} transition-colors`}>
                     <Filter className="w-3.5 h-3.5" />
                 </span>
-                更多筛选 (城市/赛事名)
+                更多筛选 (城市/赛事名/小选手)
             </span>
             {showAdvanced ? <ChevronUp className="w-4 h-4 text-kid-primary" /> : <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-kid-primary" />}
           </button>
@@ -397,6 +397,18 @@ const ConfigPanel: React.FC<Props> = ({
                       onChange={(e) => onSearchConfigChange('gameKeywords', e.target.value)}
                       className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-kid-primary focus:outline-none"
                       placeholder="例如：少年,小学"
+                    />
+                </div>
+                <div>
+                   <label className="block text-[10px] font-bold text-slate-400 mb-1">
+                     小选手名字 <span className="font-normal text-slate-300">(可选)</span>
+                   </label>
+                   <input
+                      type="text"
+                      value={searchConfig.targetPlayerName || ''}
+                      onChange={(e) => onSearchConfigChange('targetPlayerName', e.target.value)}
+                      className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-kid-primary focus:outline-none"
+                      placeholder="只看特定选手的排名..."
                     />
                 </div>
             </div>

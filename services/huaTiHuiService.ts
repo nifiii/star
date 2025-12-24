@@ -182,8 +182,14 @@ export const fetchAggregatedRankings = async (
                   const gameKeywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
                   const nameRegex = gameKeywords.length > 0 ? new RegExp(gameKeywords.join('|'), 'i') : null;
                   
+                  // NEW: Player Name Filter
+                  const targetName = (searchConfig.targetPlayerName || '').trim();
+
                   const filtered = sourceData.filter((rank: PlayerRank) => {
                        if (nameRegex && !nameRegex.test(rank.game_name)) return false;
+
+                       // Check player name if provided
+                       if (targetName && !rank.playerName.includes(targetName)) return false;
 
                        const gName = (rank.groupName || '').toUpperCase();
                        const hasUFilters = uKeys.length > 0;
@@ -296,6 +302,10 @@ export const fetchAggregatedRankings = async (
           const rankData = await rankRes.json();
           if (rankData?.detail) {
             rankData.detail.forEach((r: any) => {
+              // NEW: Filter by player name if provided
+              const targetName = (searchConfig.targetPlayerName || '').trim();
+              if (targetName && !r.playerName.includes(targetName)) return;
+
               ranksInGame.push({
                 raceId: game.id,
                 game_name: game.game_name,
