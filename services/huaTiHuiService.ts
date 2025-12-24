@@ -186,9 +186,16 @@ export const fetchAggregatedRankings = async (
                        if (!matchGroup) return false;
 
                        // 3. Filter by Item Type (e.g. 男单) - ENHANCED LOGIC
-                       // Now checks both GroupName AND GameName because existing data might lack specific itemType field
+                       // Now checks GroupName, GameName AND potential hidden fields (itemType/itemName) from JSON
                        if (typeKeys.length > 0) {
-                           const fullText = (gName + ' ' + rank.game_name).toUpperCase();
+                           const rAny = rank as any;
+                           const fullText = (
+                               (rAny.groupName || '') + ' ' + 
+                               (rAny.game_name || '') + ' ' + 
+                               (rAny.itemType || '') + ' ' + 
+                               (rAny.itemName || '')
+                           ).toUpperCase();
+                           
                            const matchType = typeKeys.some(k => fullText.includes(k.toUpperCase())); 
                            if (!matchType) return false;
                        }
@@ -255,7 +262,9 @@ export const fetchAggregatedRankings = async (
 
       const relevantItems = itemsData.detail.filter((item: any) => {
         const gName = (item.groupName || '').toUpperCase();
-        const iType = (item.itemType || '');
+        // Check BOTH itemType and itemName
+        const iType = (item.itemType || item.itemName || '').toUpperCase(); 
+        
         // Logic: Match any Key in Group Name
         const matchesGroup = groupKeys.some(k => gName.includes(k));
         const matchesType = typeKeys.length === 0 || typeKeys.some(k => iType.includes(k) || gName.includes(k));

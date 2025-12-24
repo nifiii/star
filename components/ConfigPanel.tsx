@@ -54,11 +54,11 @@ const GROUP_SECTIONS = [
 ];
 
 const ITEM_OPTIONS = [
-  { label: '男单', value: '男单,男子单打,男A,男B' },
-  { label: '女单', value: '女单,女子单打,女A,女B' },
-  { label: '男双', value: '男双,男子双打' },
-  { label: '女双', value: '女双,女子双打' },
-  { label: '混双', value: '混双,混合双打' },
+  { label: '男单', value: '男单,男子单打,男子 单打,男A,男B' },
+  { label: '女单', value: '女单,女子单打,女子 单打,女A,女B' },
+  { label: '男双', value: '男双,男子双打,男子 双打' },
+  { label: '女双', value: '女双,女子双打,女子 双打' },
+  { label: '混双', value: '混双,混合双打,混合 双打' },
   { label: '团体', value: '团体' },
 ];
 
@@ -197,7 +197,7 @@ const ConfigPanel: React.FC<Props> = ({
                     : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
                  }`}
                >
-                 <span className="text-base">👦</span> 只看男生
+                 <span className="text-base">👦</span> 男生
                </button>
                <button 
                  onClick={() => onSearchConfigChange('playerGender', searchConfig.playerGender === 'F' ? null : 'F')}
@@ -207,7 +207,7 @@ const ConfigPanel: React.FC<Props> = ({
                     : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
                  }`}
                >
-                 <span className="text-base">👧</span> 只看女生
+                 <span className="text-base">👧</span> 女生
                </button>
             </div>
           </div>
@@ -355,17 +355,26 @@ const ConfigPanel: React.FC<Props> = ({
         )}
 
         {/* PART C: Advanced */}
-        <div className="pt-2 border-t border-slate-50 relative z-0">
+        <div className="pt-2 relative z-0">
           <button 
             onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex items-center justify-between w-full text-xs font-bold text-slate-400 hover:text-kid-primary transition-colors py-1"
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-200 group ${
+                showAdvanced 
+                ? 'bg-slate-50 border-slate-200 text-kid-primary shadow-inner' 
+                : 'bg-white border-slate-200 text-slate-600 hover:border-kid-primary/50 hover:shadow-sm hover:text-kid-primary'
+            }`}
           >
-            <span>更多筛选 (城市/赛事名)</span>
-            {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            <span className="text-xs font-bold flex items-center gap-2">
+                <span className={`p-1.5 rounded-full ${showAdvanced ? 'bg-kid-primary/10' : 'bg-slate-100 group-hover:bg-kid-primary/10'} transition-colors`}>
+                    <Filter className="w-3.5 h-3.5" />
+                </span>
+                更多筛选 (城市/赛事名)
+            </span>
+            {showAdvanced ? <ChevronUp className="w-4 h-4 text-kid-primary" /> : <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-kid-primary" />}
           </button>
           
           {showAdvanced && (
-            <div className="mt-3 p-3 bg-slate-50/80 rounded-xl border border-slate-100 space-y-3 animate-fade-in text-sm">
+            <div className="mt-2 p-3 bg-slate-50/80 rounded-xl border border-slate-100 space-y-3 animate-fade-in text-sm mx-1">
                 <div className="grid grid-cols-2 gap-3">
                    <div>
                       <label className="block text-[10px] font-bold text-slate-400 mb-1">省份</label>
