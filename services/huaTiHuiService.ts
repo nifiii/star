@@ -391,9 +391,10 @@ export const fetchPlayerMatches = async (
           if (!pA.includes(targetName) && !pB.includes(targetName)) return false;
           
           if (searchConfig.playerGender) {
-             const fullText = (m.groupName + (m.itemType || '')).toUpperCase();
-             if (searchConfig.playerGender === 'M' && (fullText.includes('女') || fullText.includes('WOMEN') || fullText.includes('GIRL'))) return false;
-             if (searchConfig.playerGender === 'F' && (fullText.includes('男') || fullText.includes('MEN') || fullText.includes('BOY'))) return false;
+             const fullText = (m.groupName || '') + (m.itemType || '');
+             // 严格匹配逻辑: 必须包含 '男' 或 '女'
+             if (searchConfig.playerGender === 'M' && !fullText.includes('男')) return false;
+             if (searchConfig.playerGender === 'F' && !fullText.includes('女')) return false;
           }
           return true;
       });
@@ -459,9 +460,11 @@ export const fetchPlayerMatches = async (
           if (searchConfig.playerGender) {
              const groupName = m.fullName || m.groupName || '';
              const itemType = m.itemType || m.itemName || '';
-             const fullText = (groupName + itemType).toUpperCase();
-             if (searchConfig.playerGender === 'M' && (fullText.includes('女') || fullText.includes('WOMEN') || fullText.includes('GIRL'))) return;
-             if (searchConfig.playerGender === 'F' && (fullText.includes('男') || fullText.includes('MEN') || fullText.includes('BOY'))) return;
+             const fullText = groupName + itemType;
+             
+             // 严格匹配逻辑
+             if (searchConfig.playerGender === 'M' && !fullText.includes('男')) return;
+             if (searchConfig.playerGender === 'F' && !fullText.includes('女')) return;
           }
 
           let finalScore = "0:0";
