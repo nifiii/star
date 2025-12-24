@@ -363,7 +363,9 @@ export const App: React.FC = () => {
     const safePlayerName = targetName as string;
 
     // CHECK CACHE
-    const cacheKey = getCacheKey('matches', `${safePlayerName}_${searchConfig.province}`);
+    // FIX: Include Gender in Cache Key to avoid stale data when switching filters
+    const genderKey = searchConfig.playerGender || 'ALL';
+    const cacheKey = getCacheKey('matches', `${safePlayerName}_${searchConfig.province}_${genderKey}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
 
     setStatus(StepStatus.LOADING);
@@ -427,7 +429,9 @@ export const App: React.FC = () => {
     setLastCacheTime('');
     setHasAuthError(false);
     
-    const cacheKey = getCacheKey('matches', `${playerName}_${searchConfig.province}`);
+    // FIX: Include Gender in Cache Key here too for consistency
+    const genderKey = searchConfig.playerGender || 'ALL';
+    const cacheKey = getCacheKey('matches', `${playerName}_${searchConfig.province}_${genderKey}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
 
     if (cachedData && cachedData.length > 0) {
