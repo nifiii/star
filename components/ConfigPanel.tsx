@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { ApiHeaderConfig, SearchConfig, StepStatus, UserCredentials } from '../types';
-import { Calendar, Search, ChevronDown, ChevronUp, Trophy, UserSearch, RefreshCw, Trash2, RotateCcw, AlertTriangle, Filter, Tag, XCircle } from 'lucide-react';
+import { Calendar, Search, ChevronDown, ChevronUp, Trophy, UserSearch, RefreshCw, Trash2, RotateCcw, AlertTriangle, Filter, Tag, XCircle, User } from 'lucide-react';
 // removed generateDefaultKeywords import
 
 interface Props {
@@ -219,10 +219,7 @@ const ConfigPanel: React.FC<Props> = ({
         {/* PART B: Rankings Search */}
         {activeTab === 'rank' && (
           <div className="space-y-5 animate-fade-in relative z-20">
-            {/* Removed Age (Birth Year) Filter */}
-
-            {/* Group Filter Dropdown */}
-            {/* Increased Z-index to 50 for open state to guarantee it sits above everything */}
+            {/* 1. Group Filter Dropdown */}
             <div className={`relative ${isGroupOpen ? 'z-50' : 'z-20'}`} ref={groupRef}>
                <label className="flex items-center gap-1.5 text-xs font-bold text-slate-500 mb-2 ml-1">
                  <Filter className="w-3.5 h-3.5 text-kid-primary" /> 组别筛选 
@@ -285,8 +282,7 @@ const ConfigPanel: React.FC<Props> = ({
                )}
             </div>
 
-            {/* Item Filter Dropdown */}
-            {/* Increased Z-index to 50 for open state */}
+            {/* 2. Item Filter Dropdown */}
             <div className={`relative ${isItemOpen ? 'z-50' : 'z-10'}`} ref={itemRef}>
                <label className="flex items-center gap-1.5 text-xs font-bold text-slate-500 mb-2 ml-1">
                  <Tag className="w-3.5 h-3.5 text-kid-secondary" /> 比赛项目 
@@ -341,6 +337,20 @@ const ConfigPanel: React.FC<Props> = ({
                  </div>
                )}
             </div>
+
+            {/* 3. Player Name Filter (Now Peer to Group/Item) */}
+            <div className="relative z-0">
+               <label className="flex items-center gap-1.5 text-xs font-bold text-slate-500 mb-2 ml-1">
+                 <User className="w-3.5 h-3.5 text-slate-400" /> 小选手名字 (可选)
+               </label>
+               <input
+                  type="text"
+                  value={searchConfig.targetPlayerName || ''}
+                  onChange={(e) => onSearchConfigChange('targetPlayerName', e.target.value)}
+                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 shadow-sm focus:border-kid-primary focus:outline-none focus:ring-2 focus:ring-kid-primary/10 placeholder:text-slate-300"
+                  placeholder="只看特定选手的排名..."
+                />
+            </div>
           </div>
         )}
 
@@ -358,7 +368,7 @@ const ConfigPanel: React.FC<Props> = ({
                 <span className={`p-1.5 rounded-full ${showAdvanced ? 'bg-kid-primary/10' : 'bg-slate-100 group-hover:bg-kid-primary/10'} transition-colors`}>
                     <Filter className="w-3.5 h-3.5" />
                 </span>
-                更多筛选 (城市/赛事名/小选手)
+                更多筛选 (城市/赛事名)
             </span>
             {showAdvanced ? <ChevronUp className="w-4 h-4 text-kid-primary" /> : <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-kid-primary" />}
           </button>
@@ -399,18 +409,7 @@ const ConfigPanel: React.FC<Props> = ({
                       placeholder="例如：少年,小学"
                     />
                 </div>
-                <div>
-                   <label className="block text-[10px] font-bold text-slate-400 mb-1">
-                     小选手名字 <span className="font-normal text-slate-300">(可选)</span>
-                   </label>
-                   <input
-                      type="text"
-                      value={searchConfig.targetPlayerName || ''}
-                      onChange={(e) => onSearchConfigChange('targetPlayerName', e.target.value)}
-                      className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-kid-primary focus:outline-none"
-                      placeholder="只看特定选手的排名..."
-                    />
-                </div>
+                {/* Removed targetPlayerName from here */}
             </div>
           )}
         </div>
@@ -444,7 +443,7 @@ const ConfigPanel: React.FC<Props> = ({
                 {status === StepStatus.LOADING ? (
                    <span className="flex items-center gap-2">
                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                     扫描中...
+                     查询中...
                    </span>
                 ) : (
                   <>

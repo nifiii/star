@@ -3,7 +3,6 @@ import { ApiHeaderConfig, SearchConfig, GameBasicInfo, MatchItem, PlayerRank, Ma
 const CORS_PROXY_WARNING = "注意：从本地 Web 应用请求 ymq.me 通常需要开启 CORS 代理或浏览器插件（如 'Allow CORS'）。";
 
 // --- GLOBAL MEMORY CACHE (Session Level) ---
-// Prevents re-downloading the large JSON files if the user searches multiple times in one session.
 const MEMORY_CACHE: {
     rankings: { data: PlayerRank[], timestamp: number } | null;
     matches: { data: MatchScoreResult[], timestamp: number } | null;
@@ -37,17 +36,56 @@ async function runInBatches<T, R>(items: T[], batchSize: number, fn: (item: T, i
   return results;
 }
 
-// 1. Get Game Full List (Internal or direct use)
+// --- Helper: Load Static Data with Memory Cache ---
+async function loadStaticData<T>(
+    type: 'rankings' | 'matches',
+    onProgress: (msg: string, progress: number) => void
+): Promise<T[]> {
+    // 1. Check Memory Cache
+    if (MEMORY_CACHE[type] && (Date.now() - MEMORY_CACHE[type]!.timestamp < MEMORY_CACHE_TTL)) {
+        onProgress("🧠 读取本地缓存数据...", 10);
+        return MEMORY_CACHE[type]!.data as T[];
+    }
+    
+    // 2. Download from Server
+    onProgress(`📡 正在检查服务端数据文件 (${type === 'rankings' ? 'daily_rankings.json' : 'daily_matches.json'})...`, 5);
+    try {
+        const filename = type === 'rankings' ? '/daily_rankings.json' : '/daily_matches.json';
+        const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); // Cache bust every hour
+        const res = await fetch(`${filename}?t=${hourTs}`);
+        
+        if (res.ok) {
+             const json = await res.json();
+             // Validate data
+             if (json && Array.isArray(json.data) && json.data.length > 0) {
+                 // Save to Memory
+                 MEMORY_CACHE[type] = { data: json.data, timestamp: Date.now() };
+                 onProgress("📥 服务端文件下载完成，开始解析...", 15);
+                 return json.data as T[];
+             } else {
+                 // If file exists but is empty or initializing
+                 const status = json?.status === 'initializing' ? '初始化中' : '无数据';
+                 onProgress(`⚠️ 服务端文件状态: ${status}，准备切换至实时搜索...`, 15);
+             }
+        } else {
+             onProgress("⚠️ 未找到服务端预存文件 (404)，准备切换至实时搜索...", 15);
+        }
+    } catch (e) {
+        console.warn("Static load failed", e);
+        onProgress("⚠️ 数据文件加载失败，准备切换至实时搜索...", 15);
+    }
+    return [];
+}
+
+// 1. Get Game Full List
 export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: SearchConfig): Promise<GameBasicInfo[]> => {
   const effectiveSnTime = Date.now();
-  
   const url = `https://applyv3.ymq.me/public/public/getgamefulllist?t=${effectiveSnTime}`;
   
+  // Normalize Province/City
   let rawProvince = searchConfig.province.trim();
   let rawCity = searchConfig.city.trim();
-
   const municipalities = ['北京', '上海', '天津', '重庆'];
-  
   const provMuniMatch = municipalities.find(m => rawProvince.startsWith(m));
   const cityMuniMatch = municipalities.find(m => rawCity.startsWith(m));
 
@@ -56,62 +94,36 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
 
   if (provMuniMatch) {
     finalProvince = provMuniMatch + "市";
-    finalCity = ""; 
   } else if (cityMuniMatch) {
     finalProvince = cityMuniMatch + "市";
-    finalCity = "";
   } else {
     if (rawProvince) {
-      if (rawProvince.endsWith('省') || rawProvince.endsWith('市')) {
-        finalProvince = rawProvince;
-      } else {
-        finalProvince = rawProvince + '省';
-      }
+      finalProvince = rawProvince.endsWith('省') || rawProvince.endsWith('市') ? rawProvince : rawProvince + '省';
     }
-
     if (rawCity) {
-      if (!rawCity.endsWith('市') && !rawCity.endsWith('区') && !rawCity.endsWith('盟') && !rawCity.endsWith('州')) {
-        finalCity = rawCity + '市';
-      } else {
-        finalCity = rawCity;
-      }
+      finalCity = (!rawCity.endsWith('市') && !rawCity.endsWith('区') && !rawCity.endsWith('盟') && !rawCity.endsWith('州')) ? rawCity + '市' : rawCity;
     }
   }
 
   const requestBody: any = {
     page_num: 1,
     page_size: 100, 
-    statuss: [10], // Filter for "Ended" games
+    statuss: [10], 
     province: finalProvince ? [finalProvince] : [],
   };
-
-  if (finalCity) {
-    requestBody.city = [finalCity];
-  }
+  if (finalCity) requestBody.city = [finalCity];
 
   const payload = {
     body: requestBody,
-    header: { 
-      token: config.token, 
-      snTime: effectiveSnTime, // Use current timestamp
-      sn: config.sn,           // Use fixed SN from config
-      from: "web" 
-    }
+    header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "web" }
   };
 
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: getHeaders(config),
-      body: JSON.stringify(payload)
-    });
-
+    const response = await fetch(url, { method: 'POST', headers: getHeaders(config), body: JSON.stringify(payload) });
     if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     
-    // Loose regex matching for Game Names
     const keywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
-    // If keywords exist, create regex. If empty, match all.
     const nameRegex = keywords.length > 0 ? new RegExp(keywords.join('|'), 'i') : null;
 
     if (data && data.data && Array.isArray(data.data.list)) {
@@ -120,7 +132,6 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
         .map((game: any) => ({
           id: game.id,
           game_name: game.game_name,
-          // Fallback to end_game_time if start_date is null/empty
           start_date: game.start_date || (game.end_game_time ? new Date(game.end_game_time * 1000).toLocaleDateString() : '未知日期')
         }));
     }
@@ -138,107 +149,65 @@ export const fetchAggregatedRankings = async (
   onProgress: (msg: string, progress: number) => void
 ): Promise<{source: 'CACHE' | 'LIVE', data: PlayerRank[], updatedAt?: string}> => {
   
-  // --- TIER 1: CHECK MEMORY & SERVER FILE ---
-  // Only check cache if the search is for Guangzhou/Guangdong (Server DB limitation)
-  if (searchConfig.city.includes('广州') || searchConfig.province.includes('广东')) {
-      try {
-          let sourceData: PlayerRank[] = [];
-          let updateTimeStr = '';
+  // --- TIER 1: LOAD CACHED DATA ---
+  const sourceData = await loadStaticData<PlayerRank>('rankings', onProgress);
 
-          // A. Check In-Memory Cache first
-          if (MEMORY_CACHE.rankings && (Date.now() - MEMORY_CACHE.rankings.timestamp < MEMORY_CACHE_TTL)) {
-              onProgress("🧠 读取内存中的榜单数据...", 10);
-              sourceData = MEMORY_CACHE.rankings.data;
-              updateTimeStr = '刚刚 (内存)';
-          } else {
-              // B. Download Server File
-              onProgress("📡 正在从服务器下载离线榜单库 (daily_rankings.json)...", 5);
-              const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
-              const cacheRes = await fetch(`/daily_rankings.json?t=${hourTs}`); 
-              
-              if (cacheRes.ok) {
-                  const cacheData = await cacheRes.json();
-                  if (cacheData && Array.isArray(cacheData.data)) {
-                       if (cacheData.status === 'initializing' || (cacheData.data.length === 0 && cacheData.count === 0)) {
-                           onProgress("⏳ 服务端缓存文件初始化中，跳过...", 10);
-                       } else {
-                           sourceData = cacheData.data;
-                           updateTimeStr = new Date(cacheData.updatedAt).toLocaleString();
-                           // Save to Memory
-                           MEMORY_CACHE.rankings = { data: sourceData, timestamp: Date.now() };
-                           onProgress("📥 榜单库下载完毕，已缓存至内存。", 15);
-                       }
-                  }
-              }
-          }
+  // --- TIER 2: FILTER CACHED DATA ---
+  if (sourceData.length > 0) {
+      onProgress(`🔍 正在本地筛选...`, 20);
+      
+      const uKeys = searchConfig.uKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
+      const levelKeys = searchConfig.levelKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
+      const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
+      const gameKeywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
+      const nameRegex = gameKeywords.length > 0 ? new RegExp(gameKeywords.join('|'), 'i') : null;
+      const targetName = (searchConfig.targetPlayerName || '').trim();
 
-          // C. Filter Data (Query Logic)
-          if (sourceData.length > 0) {
-                  onProgress(`🔍 正在筛选 ${sourceData.length} 条记录...`, 20);
-                  
-                  const uKeys = searchConfig.uKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
-                  const levelKeys = searchConfig.levelKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
-                  const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
-                  const gameKeywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
-                  const nameRegex = gameKeywords.length > 0 ? new RegExp(gameKeywords.join('|'), 'i') : null;
-                  
-                  // NEW: Player Name Filter
-                  const targetName = (searchConfig.targetPlayerName || '').trim();
+      const filtered = sourceData.filter((rank: PlayerRank) => {
+           if (nameRegex && !nameRegex.test(rank.game_name)) return false;
+           if (targetName && !rank.playerName.includes(targetName)) return false;
 
-                  const filtered = sourceData.filter((rank: PlayerRank) => {
-                       if (nameRegex && !nameRegex.test(rank.game_name)) return false;
+           const gName = (rank.groupName || '').toUpperCase();
+           
+           // Group Filtering Logic
+           const hasU = uKeys.length > 0;
+           const hasLevel = levelKeys.length > 0;
+           let groupMatched = true;
 
-                       // Check player name if provided
-                       if (targetName && !rank.playerName.includes(targetName)) return false;
+           if (hasU || hasLevel) {
+              const matchesU = hasU && uKeys.some(k => gName.includes(k));
+              const matchesLevel = hasLevel && levelKeys.every(k => gName.includes(k));
+              if (hasU && !hasLevel) groupMatched = matchesU;
+              else if (!hasU && hasLevel) groupMatched = matchesLevel;
+              else groupMatched = matchesU || matchesLevel;
+           }
 
-                       const gName = (rank.groupName || '').toUpperCase();
-                       const hasUFilters = uKeys.length > 0;
-                       const hasLevelFilters = levelKeys.length > 0;
-                       
-                       let groupMatched = true;
-                       if (hasUFilters || hasLevelFilters) {
-                          const matchesU = hasUFilters && uKeys.some(k => gName.includes(k));
-                          const matchesLevel = hasLevelFilters && levelKeys.every(k => gName.includes(k));
+           if (!groupMatched) return false;
 
-                          if (hasUFilters && !hasLevelFilters) groupMatched = matchesU;
-                          else if (!hasUFilters && hasLevelFilters) groupMatched = matchesLevel;
-                          else groupMatched = matchesU || matchesLevel;
-                       }
+           if (typeKeys.length > 0) {
+               const rAny = rank as any;
+               const fullText = ((rAny.groupName || '') + ' ' + (rAny.game_name || '') + ' ' + (rAny.itemType || '') + ' ' + (rAny.itemName || '')).toUpperCase();
+               if (!typeKeys.some(k => fullText.includes(k.toUpperCase()))) return false;
+           }
+           return true;
+      });
 
-                       if (!groupMatched) return false;
-
-                       if (typeKeys.length > 0) {
-                           const rAny = rank as any;
-                           const fullText = ((rAny.groupName || '') + ' ' + (rAny.game_name || '') + ' ' + (rAny.itemType || '') + ' ' + (rAny.itemName || '')).toUpperCase();
-                           const matchType = typeKeys.some(k => fullText.includes(k.toUpperCase())); 
-                           if (!matchType) return false;
-                       }
-                       return true;
-                  });
-
-                  if (filtered.length > 0) {
-                      onProgress(`🎉 离线库命中！提取到 ${filtered.length} 条数据 (无需访问 API)`, 100);
-                      return { source: 'CACHE', data: filtered, updatedAt: updateTimeStr };
-                  } else {
-                      onProgress(`⚠️ 离线库筛选结果为空，准备转入实时搜索模式...`, 10);
-                  }
-          }
-      } catch (e) {
-          console.log("Ranking cache miss or error", e);
+      if (filtered.length > 0) {
+          onProgress(`🎉 本地命中！找到 ${filtered.length} 条数据`, 100);
+          return { source: 'CACHE', data: filtered, updatedAt: '刚刚 (静态库)' };
       }
-  } else {
-    onProgress("🌐 检测到非广州地区查询，直接连接华体汇实时数据...", 5);
+      onProgress(`⚠️ 本地数据未匹配到结果，准备启动网络搜索...`, 25);
   }
 
   // --- TIER 3: LIVE API FALLBACK ---
-  onProgress("🔎 正在扫描华体汇实时赛事列表...", 10);
+  onProgress("🚀 启动网络搜索引擎...", 30);
   const games = await fetchGameList(config, searchConfig);
 
   if (games.length === 0) {
       return { source: 'LIVE', data: [] };
   }
 
-  onProgress(`✅ 锁定 ${games.length} 个相关赛事，开始实时抓取...`, 15);
+  onProgress(`✅ 锁定 ${games.length} 个相关赛事，开始检索...`, 35);
 
   const uKeys = searchConfig.uKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
   const levelKeys = searchConfig.levelKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
@@ -251,11 +220,12 @@ export const fetchAggregatedRankings = async (
     try {
       if (index % 2 === 0) {
         processedCount = index + 1;
-        onProgress(`[实时爬虫] 正在扫描: ${game.game_name} (${processedCount}/${games.length})`, Math.floor((processedCount / games.length) * 50) + 10);
+        onProgress(`[网络搜索] 正在检索: ${game.game_name} (${processedCount}/${games.length})`, Math.floor((processedCount / games.length) * 50) + 35);
       }
       const effectiveSnTime = Date.now();
-      const itemsUrl = 'https://race.ymq.me/webservice/appWxRace/allItems.do';
-      const itemsRes = await fetch(itemsUrl, {
+      
+      // 1. Get Items
+      const itemsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', {
         method: 'POST',
         headers: getHeaders(config, 'https://apply.ymq.me/'),
         body: JSON.stringify({
@@ -267,31 +237,31 @@ export const fetchAggregatedRankings = async (
       
       if (!itemsData?.detail) return [];
 
+      // 2. Filter Items (Client side optimization to reduce requests)
       const relevantItems = itemsData.detail.filter((item: any) => {
         const gName = (item.groupName || '').toUpperCase();
         const iType = (item.itemType || item.itemName || '').toUpperCase(); 
         
-        const hasUFilters = uKeys.length > 0;
-        const hasLevelFilters = levelKeys.length > 0;
+        const hasU = uKeys.length > 0;
+        const hasLevel = levelKeys.length > 0;
         let groupMatched = true;
 
-        if (hasUFilters || hasLevelFilters) {
-           const matchesU = hasUFilters && uKeys.some(k => gName.includes(k));
-           const matchesLevel = hasLevelFilters && levelKeys.every(k => gName.includes(k));
-           if (hasUFilters && !hasLevelFilters) groupMatched = matchesU;
-           else if (!hasUFilters && hasLevelFilters) groupMatched = matchesLevel;
+        if (hasU || hasLevel) {
+           const matchesU = hasU && uKeys.some(k => gName.includes(k));
+           const matchesLevel = hasLevel && levelKeys.every(k => gName.includes(k));
+           if (hasU && !hasLevel) groupMatched = matchesU;
+           else if (!hasU && hasLevel) groupMatched = matchesLevel;
            else groupMatched = matchesU || matchesLevel;
         }
 
         if (!groupMatched) return false;
-        const matchesType = typeKeys.length === 0 || typeKeys.some(k => iType.includes(k) || gName.includes(k));
-        return matchesType;
+        return typeKeys.length === 0 || typeKeys.some(k => iType.includes(k) || gName.includes(k));
       });
 
+      // 3. Get Ranks for Items
       await Promise.all(relevantItems.map(async (item: any) => {
         try {
-          const rankUrl = 'https://race.ymq.me/webservice/appWxRank/showRankScore.do';
-          const rankRes = await fetch(rankUrl, {
+          const rankRes = await fetch('https://race.ymq.me/webservice/appWxRank/showRankScore.do', {
             method: 'POST',
             headers: getHeaders(config, 'https://apply.ymq.me/'),
             body: JSON.stringify({
@@ -302,7 +272,6 @@ export const fetchAggregatedRankings = async (
           const rankData = await rankRes.json();
           if (rankData?.detail) {
             rankData.detail.forEach((r: any) => {
-              // NEW: Filter by player name if provided
               const targetName = (searchConfig.targetPlayerName || '').trim();
               if (targetName && !r.playerName.includes(targetName)) return;
 
@@ -338,81 +307,39 @@ export const fetchPlayerMatches = async (
   
   const targetName = playerName.trim().toLowerCase();
   
-  // --- TIER 1: CHECK MEMORY & SERVER FILE ---
-  const isCacheRegion = searchConfig.city.includes('广州') || searchConfig.province.includes('广东');
+  // --- TIER 1: LOAD CACHED DATA ---
+  const sourceData = await loadStaticData<MatchScoreResult>('matches', onProgress);
 
-  if (isCacheRegion) {
-    try {
-        let sourceData: MatchScoreResult[] = [];
-
-        // A. Check In-Memory Cache First
-        if (MEMORY_CACHE.matches && (Date.now() - MEMORY_CACHE.matches.timestamp < MEMORY_CACHE_TTL)) {
-             onProgress("🧠 读取内存中的比分数据库...", 10);
-             sourceData = MEMORY_CACHE.matches.data;
-        } else {
-             // B. Download Server File to Memory
-             onProgress("🚀 正在下载服务端比分数据库 (daily_matches.json)...", 5);
-             const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
-             const cacheRes = await fetch(`/daily_matches.json?t=${hourTs}`);
-             
-             if (cacheRes.ok) {
-                 const cacheData = await cacheRes.json();
-                 if (cacheData && Array.isArray(cacheData.data)) {
-                    if (cacheData.status === 'initializing' || (cacheData.data.length === 0 && cacheData.count === 0)) {
-                         onProgress("⏳ 服务端比分库初始化中，跳过...", 10);
-                    } else {
-                         sourceData = cacheData.data;
-                         // Store to Memory Cache
-                         MEMORY_CACHE.matches = { data: sourceData, timestamp: Date.now() };
-                         onProgress(`📥 比分库下载完成，已缓存至内存 (共 ${sourceData.length} 条)。`, 15);
-                    }
-                 }
-             }
-        }
-
-        // C. Filter (Query Logic)
-        if (sourceData.length > 0) {
-                onProgress(`🔎 正在离线库中检索 "${playerName}"...`, 20);
-                
-                const hits = sourceData.filter((m: MatchScoreResult) => {
-                    const pA = (m.playerA || '').toLowerCase();
-                    const pB = (m.playerB || '').toLowerCase();
-                    const nameMatch = pA.includes(targetName) || pB.includes(targetName);
-                    
-                    if (!nameMatch) return false;
-                    
-                    // Gender Filter Logic
-                    if (searchConfig.playerGender) {
-                       const fullText = (m.groupName + (m.itemType || '')).toUpperCase();
-                       if (searchConfig.playerGender === 'M') {
-                           if (fullText.includes('女') || fullText.includes('WOMEN') || fullText.includes('GIRL')) return false;
-                       } else if (searchConfig.playerGender === 'F') {
-                           if (fullText.includes('男') || fullText.includes('MEN') || fullText.includes('BOY')) return false;
-                       }
-                    }
-                    return true;
-                });
-                
-                if (hits.length > 0) {
-                    onProgress(`🎉 离线库检索成功！找到 ${hits.length} 场记录`, 100);
-                    return hits;
-                } else {
-                    onProgress(`⚠️ 离线库未找到 "${playerName}"。正在转为全网实时搜索...`, 10);
-                }
-        }
-    } catch(e) {
-        console.log("Match cache miss, falling back to live", e);
-    }
-  } else {
-    onProgress("🌐 检测到非广州地区查询，跳过离线库，准备启动全网搜索...", 5);
+  // --- TIER 2: FILTER CACHED DATA ---
+  if (sourceData.length > 0) {
+      onProgress(`🔍 正在本地比分库中检索 "${playerName}"...`, 20);
+      
+      const hits = sourceData.filter((m: MatchScoreResult) => {
+          const pA = (m.playerA || '').toLowerCase();
+          const pB = (m.playerB || '').toLowerCase();
+          if (!pA.includes(targetName) && !pB.includes(targetName)) return false;
+          
+          if (searchConfig.playerGender) {
+             const fullText = (m.groupName + (m.itemType || '')).toUpperCase();
+             if (searchConfig.playerGender === 'M' && (fullText.includes('女') || fullText.includes('WOMEN') || fullText.includes('GIRL'))) return false;
+             if (searchConfig.playerGender === 'F' && (fullText.includes('男') || fullText.includes('MEN') || fullText.includes('BOY'))) return false;
+          }
+          return true;
+      });
+      
+      if (hits.length > 0) {
+          onProgress(`🎉 本地命中！找到 ${hits.length} 场记录`, 100);
+          return hits;
+      }
+      onProgress(`⚠️ 本地比分库未找到 "${playerName}"，准备启动网络搜索...`, 25);
   }
 
   // --- TIER 3: LIVE API FALLBACK ---
-  onProgress("🔎 正在扫描华体汇实时赛事列表...", 10);
+  onProgress("🚀 启动网络搜索引擎...", 30);
   const games = await fetchGameList(config, searchConfig);
 
   if (games.length === 0) return [];
-  onProgress(`✅ 锁定 ${games.length} 个相关赛事，开始实时检索...`, 15);
+  onProgress(`✅ 锁定 ${games.length} 个相关赛事，开始检索...`, 35);
 
   let processedCount = 0;
 
@@ -421,15 +348,13 @@ export const fetchPlayerMatches = async (
     
     if (index % 3 === 0) {
        processedCount = index;
-       const percent = Math.floor((processedCount / games.length) * 100);
-       onProgress(`[实时爬虫] 正在检索赛事: ${game.game_name} (${percent}%)`, percent);
+       const percent = Math.floor((processedCount / games.length) * 50) + 35;
+       onProgress(`[网络搜索] 正在检索: ${game.game_name}`, percent);
     }
 
     const effectiveSnTime = Date.now();
-    const url = `https://race.ymq.me/webservice/appWxMatch/matchesScore.do?t=${effectiveSnTime}`;
-    
     try {
-      const res = await fetch(url, {
+      const res = await fetch(`https://race.ymq.me/webservice/appWxMatch/matchesScore.do?t=${effectiveSnTime}`, {
         method: 'POST',
         headers: getHeaders(config, 'https://apply.ymq.me/'),
         body: JSON.stringify({
@@ -437,7 +362,7 @@ export const fetchPlayerMatches = async (
             raceId: game.id,
             page: 1,
             rows: 50, 
-            keyword: playerName // API might be strict, but we pass original
+            keyword: playerName 
           },
           header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "wx" }
         })
@@ -445,7 +370,6 @@ export const fetchPlayerMatches = async (
 
       if (!res.ok) return [];
       const data = await res.json();
-      
       const rows = data?.detail?.rows || data?.list || [];
 
       if (Array.isArray(rows)) {
@@ -465,11 +389,8 @@ export const fetchPlayerMatches = async (
              const groupName = m.fullName || m.groupName || '';
              const itemType = m.itemType || m.itemName || '';
              const fullText = (groupName + itemType).toUpperCase();
-             if (searchConfig.playerGender === 'M') {
-                 if (fullText.includes('女') || fullText.includes('WOMEN') || fullText.includes('GIRL')) return;
-             } else if (searchConfig.playerGender === 'F') {
-                 if (fullText.includes('男') || fullText.includes('MEN') || fullText.includes('BOY')) return;
-             }
+             if (searchConfig.playerGender === 'M' && (fullText.includes('女') || fullText.includes('WOMEN') || fullText.includes('GIRL'))) return;
+             if (searchConfig.playerGender === 'F' && (fullText.includes('男') || fullText.includes('MEN') || fullText.includes('BOY'))) return;
           }
 
           let finalScore = "0:0";
