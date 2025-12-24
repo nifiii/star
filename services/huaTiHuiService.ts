@@ -111,8 +111,10 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
     if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     
+    // Loose regex matching for Game Names
     const keywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
-    const nameRegex = keywords.length > 0 ? new RegExp(keywords.join('|')) : null;
+    // If keywords exist, create regex. If empty, match all.
+    const nameRegex = keywords.length > 0 ? new RegExp(keywords.join('|'), 'i') : null;
 
     if (data && data.data && Array.isArray(data.data.list)) {
       return data.data.list
@@ -142,40 +144,50 @@ export const fetchAggregatedRankings = async (
   // --- CACHE LAYER OPTIMIZATION ---
   if (searchConfig.city.includes('广州') || searchConfig.province.includes('广东')) {
       try {
-          onProgress("正在检查每日系统缓存...", 5);
+          onProgress("正在下载服务端离线数据库 (这可能需要几秒钟)...", 5);
           const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
           const cacheRes = await fetch(`/daily_rankings.json?t=${hourTs}`); 
           
           if (cacheRes.ok) {
+              onProgress("数据库下载完成，正在解析数据...", 15);
               const cacheData = await cacheRes.json();
+              
               if (cacheData && Array.isArray(cacheData.data) && cacheData.data.length > 0) {
                   const updateTimeStr = new Date(cacheData.updatedAt).toLocaleString();
-                  onProgress(`命中每日缓存 (${updateTimeStr} 更新)`, 20);
+                  onProgress(`解析成功 (${updateTimeStr} 更新)，正在筛选...`, 20);
                   
                   const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
                   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
+                  
                   const gameKeywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
-                  const nameRegex = gameKeywords.length > 0 ? new RegExp(gameKeywords.join('|')) : null;
+                  const nameRegex = gameKeywords.length > 0 ? new RegExp(gameKeywords.join('|'), 'i') : null;
                   
                   const filtered = cacheData.data.filter((rank: PlayerRank) => {
+                       // 1. Filter by Game Name (Loose)
                        if (nameRegex && !nameRegex.test(rank.game_name)) return false;
 
+                       // 2. Filter by Group Name (Case Insensitive)
                        const gName = (rank.groupName || '').toUpperCase();
-                       const matchGroup = groupKeys.some(k => gName.includes(k));
+                       // Use regex-like logic? No, simplistic check first.
+                       // Allow partial match
+                       const matchGroup = groupKeys.length === 0 || groupKeys.some(k => gName.includes(k));
                        if (!matchGroup) return false;
 
+                       // 3. Filter by Item Type (e.g. 男单)
                        if (typeKeys.length > 0) {
-                           const matchType = typeKeys.some(k => gName.includes(k)); 
+                           // rank.groupName usually contains item type like "U8 男单"
+                           const matchType = typeKeys.some(k => gName.includes(k.toUpperCase())); 
                            if (!matchType) return false;
                        }
                        return true;
                   });
 
                   if (filtered.length > 0) {
-                      onProgress(`缓存处理完成，获取到 ${filtered.length} 条数据`, 100);
+                      onProgress(`离线库命中！提取到 ${filtered.length} 条数据`, 100);
                       return { source: 'CACHE', data: filtered, updatedAt: updateTimeStr };
                   } else {
-                      onProgress("缓存中未找到匹配数据，转为实时抓取...", 10);
+                      console.log("Cache loaded but filtered result is empty. Debug:", { groupKeys, typeKeys, sample: cacheData.data[0] });
+                      onProgress("⚠️ 离线库中未找到符合条件的数据 (可能筛选条件过严)，尝试实时抓取...", 10);
                   }
               }
           }
@@ -195,7 +207,7 @@ export const fetchAggregatedRankings = async (
     try {
       if (index % 2 === 0) {
         processedCount = index + 1;
-        onProgress(`正在极速扫描: ${game.game_name}`, Math.floor((processedCount / games.length) * 50) + 10);
+        onProgress(`[实时爬虫] 正在扫描: ${game.game_name} (${processedCount}/${games.length})`, Math.floor((processedCount / games.length) * 50) + 10);
       }
       const effectiveSnTime = Date.now();
       const itemsUrl = 'https://race.ymq.me/webservice/appWxRace/allItems.do';
@@ -263,34 +275,44 @@ export const fetchPlayerMatches = async (
   onProgress: (msg: string, progress: number) => void
 ): Promise<MatchScoreResult[]> => {
   
+  // Normalize Search Term
+  const targetName = playerName.trim().toLowerCase();
+
   // --- CACHE LAYER OPTIMIZATION FOR MATCHES ---
   // Try to load full match history from daily static file first
   try {
-      onProgress("正在搜索本地比分数据库...", 5);
+      onProgress("🚀 正在下载服务端比分数据库 (Daily Matches)...", 5);
       const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
       const cacheRes = await fetch(`/daily_matches.json?t=${hourTs}`);
       
       if (cacheRes.ok) {
+          onProgress("数据库下载完成，正在本地索引...", 15);
           const cacheData = await cacheRes.json();
+          
           if (cacheData && Array.isArray(cacheData.data) && cacheData.data.length > 0) {
-              onProgress("命中本地比分库，正在筛选...", 20);
+              const totalRecords = cacheData.data.length;
+              onProgress(`数据库索引完毕 (共 ${totalRecords} 条记录)，正在查找 "${playerName}"...`, 20);
               
-              // Filter locally
+              // Filter locally with loose matching
               const hits = cacheData.data.filter((m: MatchScoreResult) => {
-                  return m.playerA.includes(playerName) || m.playerB.includes(playerName);
+                  const pA = (m.playerA || '').toLowerCase();
+                  const pB = (m.playerB || '').toLowerCase();
+                  return pA.includes(targetName) || pB.includes(targetName);
               });
               
               if (hits.length > 0) {
-                  onProgress(`本地数据库筛选完成，找到 ${hits.length} 场记录`, 100);
+                  onProgress(`✅ 离线库检索成功！找到 ${hits.length} 场记录`, 100);
                   // Return sorted by date (if possible, currently matchTime is a string, assuming fetch order is roughly chronological)
                   return hits;
               } else {
-                  onProgress("本地库未收录该选手，转为全网实时搜索...", 10);
+                  // Explicit warning that we are falling back
+                  console.log(`Cache miss for player: ${targetName}. Total records scanned: ${totalRecords}`);
+                  onProgress(`⚠️ 离线库未收录 "${playerName}"，准备启动全网搜索 (较慢)...`, 10);
               }
           }
       }
   } catch(e) {
-      console.log("Match cache miss, falling back to live");
+      console.log("Match cache miss, falling back to live", e);
   }
 
   // --- FALLBACK TO LIVE API ---
@@ -301,7 +323,8 @@ export const fetchPlayerMatches = async (
     
     if (index % 3 === 0) {
        processedCount = index;
-       onProgress(`正在全网检索: ${game.game_name}`, Math.floor((processedCount / games.length) * 100));
+       const percent = Math.floor((processedCount / games.length) * 100);
+       onProgress(`[实时爬虫] 正在检索赛事: ${game.game_name} (${percent}%)`, percent);
     }
 
     const effectiveSnTime = Date.now();
@@ -316,7 +339,7 @@ export const fetchPlayerMatches = async (
             raceId: game.id,
             page: 1,
             rows: 50, 
-            keyword: playerName
+            keyword: playerName // API might be strict, but we pass original
           },
           header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "wx" }
         })
@@ -337,7 +360,8 @@ export const fetchPlayerMatches = async (
           if (!p2 && Array.isArray(m.playerTwos) && m.playerTwos.length > 0) p2 = m.playerTwos[0].name;
           if (!p2) p2 = m.user2Name || m.playerB || '未知选手B';
 
-          if (!p1.includes(playerName) && !p2.includes(playerName)) return; 
+          // Double check filtering locally
+          if (!p1.toLowerCase().includes(targetName) && !p2.toLowerCase().includes(targetName)) return; 
 
           let finalScore = "0:0";
           let statusLabel = "";
