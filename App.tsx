@@ -29,7 +29,7 @@ const INITIAL_SEARCH_CONFIG: SearchConfig = {
   birthYear: 2017, // 8 years old in 2025
   province: "广东省",
   city: "广州市",
-  gameKeywords: "少年,小学",
+  gameKeywords: "", // CHANGED: Empty by default to avoid filtering out valid games
   groupKeywords: 'U8,乙',
   itemKeywords: '男单',
   targetPlayerName: ''

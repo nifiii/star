@@ -34,7 +34,7 @@ export const generateDefaultKeywords = (birthYear: number) => {
   if (age <= 7) keywords.push("丙");
   else if (age <= 9) keywords.push("乙");
   else if (age <= 11) keywords.push("甲");
-  else if (age <= 13) keywords.push("少");
+  else if (age <= 13) keywords.push("少年"); // CHANGED: '少' -> '少年' to be more specific and avoid '少儿'
 
   return keywords.join(",");
 };
@@ -164,6 +164,11 @@ export const fetchAggregatedRankings = async (
                   onProgress(`✅ 解析成功 (${updateTimeStr} 更新)，正在筛选 ${totalCount} 条记录...`, 20);
                   
                   const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
+                  // Add Birth Year to search keys (e.g., "2018") to match "2018年组" which is common
+                  if (searchConfig.birthYear) {
+                      groupKeys.push(searchConfig.birthYear.toString());
+                  }
+
                   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
                   
                   const gameKeywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
@@ -175,7 +180,8 @@ export const fetchAggregatedRankings = async (
 
                        // 2. Filter by Group Name (Case Insensitive)
                        const gName = (rank.groupName || '').toUpperCase();
-                       // Allow partial match
+                       // Allow partial match: Match if NO group keywords selected OR if at least one matches
+                       // Note: Logic is now (U7 OR 丙 OR 2018)
                        const matchGroup = groupKeys.length === 0 || groupKeys.some(k => gName.includes(k));
                        if (!matchGroup) return false;
 
@@ -189,14 +195,14 @@ export const fetchAggregatedRankings = async (
                        return true;
                   });
 
-                  // STRICT LOGIC: If cache loaded successfully for Guangzhou, we trust it completely.
-                  // We do NOT fall back to live crawling if the cache is empty or filtering returns nothing.
                   if (filtered.length > 0) {
                       onProgress(`🎉 离线库命中！提取到 ${filtered.length} 条数据 (无需访问 API)`, 100);
+                      return { source: 'CACHE', data: filtered, updatedAt: updateTimeStr };
                   } else {
-                      onProgress(`⚠️ 离线库已加载 ${totalCount} 条，但筛选后为 0 条。建议清空“项目”栏重试。`, 100);
+                      // FALLBACK LOGIC: If cache has data but filters result in 0, we now try LIVE search
+                      onProgress(`⚠️ 离线库筛选结果为空 (共 ${totalCount} 条)，准备转入实时搜索模式以防遗漏...`, 10);
+                      // Do not return here, let it fall through to LIVE execution below
                   }
-                  return { source: 'CACHE', data: filtered, updatedAt: updateTimeStr };
               }
           }
       } catch (e) {
@@ -218,6 +224,10 @@ export const fetchAggregatedRankings = async (
   onProgress(`✅ 锁定 ${games.length} 个相关赛事，开始实时抓取...`, 15);
 
   const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
+  // Add Birth Year to LIVE search as well
+  if (searchConfig.birthYear) {
+     groupKeys.push(searchConfig.birthYear.toString());
+  }
   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
   
   let processedCount = 0;
@@ -246,6 +256,7 @@ export const fetchAggregatedRankings = async (
       const relevantItems = itemsData.detail.filter((item: any) => {
         const gName = (item.groupName || '').toUpperCase();
         const iType = (item.itemType || '');
+        // Logic: Match any Key in Group Name
         const matchesGroup = groupKeys.some(k => gName.includes(k));
         const matchesType = typeKeys.length === 0 || typeKeys.some(k => iType.includes(k) || gName.includes(k));
         return matchesGroup && matchesType;
@@ -345,13 +356,13 @@ export const fetchPlayerMatches = async (
                     return true;
                 });
                 
-                // STRICT LOGIC: Trust the cache.
                 if (hits.length > 0) {
                     onProgress(`🎉 离线库检索成功！找到 ${hits.length} 场记录`, 100);
                     return hits;
                 } else {
-                    onProgress(`⚠️ 离线库已包含 ${totalRecords} 场比赛，但未找到 "${playerName}" 的记录。停止搜索 (因为限定为广州地区)。`, 100);
-                    return [];
+                    // FALLBACK LOGIC: If not found in cache, fall through to LIVE
+                    onProgress(`⚠️ 离线库未找到 "${playerName}" (已查阅 ${totalRecords} 条)。正在转为全网实时搜索...`, 10);
+                    // Do NOT return empty array here
                 }
             }
         }
