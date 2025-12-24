@@ -318,7 +318,7 @@ export const App: React.FC = () => {
         (msg, prog) => {
            setProgress(prog);
            // Restore detailed logs so user sees what's happening
-           if (prog === 5 || prog === 15 || prog === 100 || msg.includes('实时')) {
+           if (prog === 5 || prog === 15 || prog === 100 || msg.includes('网络搜索') || msg.includes('解析') || (msg.includes('下载') && prog % 5 === 0)) {
               addLog(msg, "info"); 
            }
         }
@@ -393,7 +393,13 @@ export const App: React.FC = () => {
         config,
         safePlayerName,
         searchConfig,
-        (msg, prog) => setProgress(prog)
+        (msg, prog) => {
+            setProgress(prog);
+            // Allow logs for download/search phases
+            if (prog === 5 || prog === 100 || msg.includes('网络搜索') || msg.includes('解析') || (msg.includes('下载') && prog % 5 === 0)) {
+                addLog(msg, "info");
+            }
+        }
       );
 
       setMatchHistory(matches);
@@ -438,7 +444,13 @@ export const App: React.FC = () => {
         config,
         playerName,
         searchConfig,
-        (msg, prog) => setProgress(prog)
+        (msg, prog) => {
+             setProgress(prog);
+             // Allow logs for download/search phases
+             if (prog === 5 || prog === 100 || msg.includes('网络搜索') || msg.includes('解析') || (msg.includes('下载') && prog % 5 === 0)) {
+                addLog(msg, "info");
+             }
+        }
       );
 
       setMatchHistory(matches);

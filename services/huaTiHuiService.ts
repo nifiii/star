@@ -36,7 +36,20 @@ async function runInBatches<T, R>(items: T[], batchSize: number, fn: (item: T, i
   return results;
 }
 
-// --- Helper: Load Static Data with Memory Cache ---
+// --- Helper: Process and Cache JSON ---
+function processJson<T>(json: any, type: 'rankings' | 'matches', onProgress: (msg: string, progress: number) => void): T[] {
+     if (json && Array.isArray(json.data) && json.data.length > 0) {
+         MEMORY_CACHE[type] = { data: json.data, timestamp: Date.now() };
+         onProgress("✅ 数据解析成功，已缓存至内存。", 25);
+         return json.data;
+     } else {
+         const status = json?.status === 'initializing' ? '初始化中' : '无数据';
+         onProgress(`⚠️ 服务端文件状态: ${status}，准备切换至实时搜索...`, 25);
+         return [];
+     }
+}
+
+// --- Helper: Load Static Data with Download Progress ---
 async function loadStaticData<T>(
     type: 'rankings' | 'matches',
     onProgress: (msg: string, progress: number) => void
@@ -48,28 +61,71 @@ async function loadStaticData<T>(
     }
     
     // 2. Download from Server
-    onProgress(`📡 正在检查服务端数据文件 (${type === 'rankings' ? 'daily_rankings.json' : 'daily_matches.json'})...`, 5);
+    const filename = type === 'rankings' ? 'daily_rankings.json' : 'daily_matches.json';
+    onProgress(`📡 准备下载服务端数据文件 /${filename}...`, 5);
+    
     try {
-        const filename = type === 'rankings' ? '/daily_rankings.json' : '/daily_matches.json';
         const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); // Cache bust every hour
-        const res = await fetch(`${filename}?t=${hourTs}`);
+        const res = await fetch(`/${filename}?t=${hourTs}`);
         
-        if (res.ok) {
-             const json = await res.json();
-             // Validate data
-             if (json && Array.isArray(json.data) && json.data.length > 0) {
-                 // Save to Memory
-                 MEMORY_CACHE[type] = { data: json.data, timestamp: Date.now() };
-                 onProgress("📥 服务端文件下载完成，开始解析...", 15);
-                 return json.data as T[];
-             } else {
-                 // If file exists but is empty or initializing
-                 const status = json?.status === 'initializing' ? '初始化中' : '无数据';
-                 onProgress(`⚠️ 服务端文件状态: ${status}，准备切换至实时搜索...`, 15);
-             }
-        } else {
-             onProgress("⚠️ 未找到服务端预存文件 (404)，准备切换至实时搜索...", 15);
+        if (!res.ok) {
+             onProgress(`⚠️ 未找到服务端文件 (HTTP ${res.status})，准备切换至实时搜索...`, 15);
+             return [];
         }
+
+        const contentLength = res.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+        let loaded = 0;
+
+        const reader = res.body?.getReader();
+        if (!reader) {
+             // Fallback if streams not supported
+             const json = await res.json();
+             return processJson(json, type, onProgress);
+        }
+
+        const chunks: Uint8Array[] = [];
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            if (value) {
+                chunks.push(value);
+                loaded += value.length;
+                
+                if (total > 0) {
+                    const dlPercent = Math.floor((loaded / total) * 100);
+                    // Map 0-100% download to 5-20% overall progress
+                    const stepProgress = 5 + Math.floor((loaded / total) * 15); 
+                    
+                    const loadedMB = (loaded / (1024 * 1024)).toFixed(2);
+                    const totalMB = (total / (1024 * 1024)).toFixed(2);
+                    
+                    onProgress(`⬇️ 下载中: ${loadedMB}MB / ${totalMB}MB (${dlPercent}%)`, stepProgress);
+                } else {
+                    // Unknown length
+                    const loadedMB = (loaded / (1024 * 1024)).toFixed(2);
+                    onProgress(`⬇️ 下载中: ${loadedMB}MB...`, 10);
+                }
+            }
+        }
+
+        onProgress("📦 下载完成，正在解析 JSON...", 22);
+
+        // Combine chunks
+        const allChunks = new Uint8Array(loaded);
+        let position = 0;
+        for (const chunk of chunks) {
+            allChunks.set(chunk, position);
+            position += chunk.length;
+        }
+
+        const text = new TextDecoder("utf-8").decode(allChunks);
+        const json = JSON.parse(text);
+
+        return processJson(json, type, onProgress);
+
     } catch (e) {
         console.warn("Static load failed", e);
         onProgress("⚠️ 数据文件加载失败，准备切换至实时搜索...", 15);
@@ -154,7 +210,7 @@ export const fetchAggregatedRankings = async (
 
   // --- TIER 2: FILTER CACHED DATA ---
   if (sourceData.length > 0) {
-      onProgress(`🔍 正在本地筛选...`, 20);
+      onProgress(`🔍 正在本地筛选...`, 25);
       
       const uKeys = searchConfig.uKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
       const levelKeys = searchConfig.levelKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
@@ -196,7 +252,7 @@ export const fetchAggregatedRankings = async (
           onProgress(`🎉 本地命中！找到 ${filtered.length} 条数据`, 100);
           return { source: 'CACHE', data: filtered, updatedAt: '刚刚 (静态库)' };
       }
-      onProgress(`⚠️ 本地数据未匹配到结果，准备启动网络搜索...`, 25);
+      onProgress(`⚠️ 本地数据未匹配到结果，准备启动网络搜索...`, 28);
   }
 
   // --- TIER 3: LIVE API FALLBACK ---
@@ -312,7 +368,7 @@ export const fetchPlayerMatches = async (
 
   // --- TIER 2: FILTER CACHED DATA ---
   if (sourceData.length > 0) {
-      onProgress(`🔍 正在本地比分库中检索 "${playerName}"...`, 20);
+      onProgress(`🔍 正在本地比分库中检索 "${playerName}"...`, 25);
       
       const hits = sourceData.filter((m: MatchScoreResult) => {
           const pA = (m.playerA || '').toLowerCase();
@@ -331,7 +387,7 @@ export const fetchPlayerMatches = async (
           onProgress(`🎉 本地命中！找到 ${hits.length} 场记录`, 100);
           return hits;
       }
-      onProgress(`⚠️ 本地比分库未找到 "${playerName}"，准备启动网络搜索...`, 25);
+      onProgress(`⚠️ 本地比分库未找到 "${playerName}"，准备启动网络搜索...`, 28);
   }
 
   // --- TIER 3: LIVE API FALLBACK ---
