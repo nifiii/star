@@ -79,7 +79,6 @@ export const App: React.FC = () => {
   const [hasAuthError, setHasAuthError] = useState(false);
 
   // Data Cache
-  const [cachedGames, setCachedGames] = useState<GameBasicInfo[]>([]);
   const [rankings, setRankings] = useState<PlayerRank[]>([]);
   const [rankingSource, setRankingSource] = useState<{type: 'CACHE' | 'LIVE', time?: string} | null>(null);
 
@@ -288,26 +287,18 @@ export const App: React.FC = () => {
     }
 
     try {
-      addLog("🔎 正在扫描城市赛事列表...", "info");
-      const games = await fetchGameList(
-        config, // Service handles snTime automatically now
-        searchConfig
-      );
+      addLog("⏳ 开始检索...", "info");
       
-      if (games.length === 0) {
-        addLog("❌ 未找到赛事，请检查Token是否有效，或更改城市/年份。", "error");
-        setHasAuthError(true); 
-        setStatus(StepStatus.ERROR);
-        return;
-      }
-      setCachedGames(games); 
-      addLog(`✅ 锁定 ${games.length} 个相关赛事! 开始抓取排名...`, "success");
-
       const result = await fetchAggregatedRankings(
         config,
         searchConfig,
-        games,
-        (msg, prog) => setProgress(prog)
+        (msg, prog) => {
+           setProgress(prog);
+           // Only log significant milestones to avoid spamming the log viewer
+           if (prog === 5 || prog === 15 || prog === 100 || msg.includes('实时')) {
+             // Optional: addLog(msg, "info"); 
+           }
+        }
       );
 
       setRankings(result.data);
@@ -369,19 +360,10 @@ export const App: React.FC = () => {
     try {
        addLog(`🔍 启动全网搜人引擎: ${safePlayerName}`, "info");
        
-       let games = cachedGames;
-       if (games.length === 0) {
-         addLog("正在获取赛事范围...", "info");
-         games = await fetchGameList(config, searchConfig);
-         setCachedGames(games);
-       }
-       
-       addLog(`📚 正在 ${games.length} 场赛事中翻阅记录...`, "info");
-
        const matches = await fetchPlayerMatches(
         config,
         safePlayerName,
-        games,
+        searchConfig,
         (msg, prog) => setProgress(prog)
       );
 
@@ -423,15 +405,10 @@ export const App: React.FC = () => {
     addLog(`🚀 正在分析 [${playerName}] 的战绩详情...`, "info");
 
     try {
-      if (cachedGames.length === 0) {
-        const games = await fetchGameList(config, searchConfig);
-        setCachedGames(games);
-      }
-
       const matches = await fetchPlayerMatches(
         config,
         playerName,
-        cachedGames,
+        searchConfig,
         (msg, prog) => setProgress(prog)
       );
 
@@ -449,7 +426,6 @@ export const App: React.FC = () => {
   const handleDemo = () => {
     addLog("🚧 加载演示数据模式...", "info");
     setRankings(getMockRanks());
-    setCachedGames([{ id: 'mock', game_name: 'Mock Game' }]);
     setMatchHistory(getMockMatches("演示选手"));
     setStatus(StepStatus.COMPLETE);
     setSelectedPlayer("演示选手");

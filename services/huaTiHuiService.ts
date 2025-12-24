@@ -39,7 +39,7 @@ export const generateDefaultKeywords = (birthYear: number) => {
   return keywords.join(",");
 };
 
-// 1. Get Game Full List
+// 1. Get Game Full List (Internal or direct use)
 export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: SearchConfig): Promise<GameBasicInfo[]> => {
   const effectiveSnTime = Date.now();
   
@@ -137,24 +137,23 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
 export const fetchAggregatedRankings = async (
   config: ApiHeaderConfig, 
   searchConfig: SearchConfig,
-  games: GameBasicInfo[],
   onProgress: (msg: string, progress: number) => void
 ): Promise<{source: 'CACHE' | 'LIVE', data: PlayerRank[], updatedAt?: string}> => {
   
   // --- CACHE LAYER OPTIMIZATION ---
   if (searchConfig.city.includes('广州') || searchConfig.province.includes('广东')) {
       try {
-          onProgress("正在下载服务端离线数据库 (这可能需要几秒钟)...", 5);
+          onProgress("📡 正在尝试连接服务端离线数据库...", 5);
           const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
           const cacheRes = await fetch(`/daily_rankings.json?t=${hourTs}`); 
           
           if (cacheRes.ok) {
-              onProgress("数据库下载完成，正在解析数据...", 15);
+              onProgress("📥 数据库下载完成，正在解析...", 15);
               const cacheData = await cacheRes.json();
               
               if (cacheData && Array.isArray(cacheData.data) && cacheData.data.length > 0) {
                   const updateTimeStr = new Date(cacheData.updatedAt).toLocaleString();
-                  onProgress(`解析成功 (${updateTimeStr} 更新)，正在筛选...`, 20);
+                  onProgress(`✅ 解析成功 (${updateTimeStr} 更新)，正在筛选...`, 20);
                   
                   const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
                   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
@@ -168,14 +167,12 @@ export const fetchAggregatedRankings = async (
 
                        // 2. Filter by Group Name (Case Insensitive)
                        const gName = (rank.groupName || '').toUpperCase();
-                       // Use regex-like logic? No, simplistic check first.
                        // Allow partial match
                        const matchGroup = groupKeys.length === 0 || groupKeys.some(k => gName.includes(k));
                        if (!matchGroup) return false;
 
                        // 3. Filter by Item Type (e.g. 男单)
                        if (typeKeys.length > 0) {
-                           // rank.groupName usually contains item type like "U8 男单"
                            const matchType = typeKeys.some(k => gName.includes(k.toUpperCase())); 
                            if (!matchType) return false;
                        }
@@ -183,11 +180,11 @@ export const fetchAggregatedRankings = async (
                   });
 
                   if (filtered.length > 0) {
-                      onProgress(`离线库命中！提取到 ${filtered.length} 条数据`, 100);
+                      onProgress(`🎉 离线库命中！提取到 ${filtered.length} 条数据 (无需访问 API)`, 100);
                       return { source: 'CACHE', data: filtered, updatedAt: updateTimeStr };
                   } else {
                       console.log("Cache loaded but filtered result is empty. Debug:", { groupKeys, typeKeys, sample: cacheData.data[0] });
-                      onProgress("⚠️ 离线库中未找到符合条件的数据 (可能筛选条件过严)，尝试实时抓取...", 10);
+                      onProgress("⚠️ 离线库中未找到符合条件的数据 (可能筛选条件过严)，转入实时抓取模式...", 10);
                   }
               }
           }
@@ -197,6 +194,15 @@ export const fetchAggregatedRankings = async (
   }
 
   // --- FALLBACK TO LIVE API ---
+  onProgress("🔎 离线数据不可用，正在扫描华体汇实时赛事列表...", 10);
+  const games = await fetchGameList(config, searchConfig);
+
+  if (games.length === 0) {
+      return { source: 'LIVE', data: [] };
+  }
+
+  onProgress(`✅ 锁定 ${games.length} 个相关赛事，开始实时抓取...`, 15);
+
   const groupKeys = searchConfig.groupKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
   const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
   
@@ -271,7 +277,8 @@ export const fetchAggregatedRankings = async (
 export const fetchPlayerMatches = async (
   config: ApiHeaderConfig,
   playerName: string,
-  games: GameBasicInfo[],
+  // games: GameBasicInfo[], // Removed, now internal
+  searchConfig: SearchConfig, // Added to support fallback game fetch
   onProgress: (msg: string, progress: number) => void
 ): Promise<MatchScoreResult[]> => {
   
@@ -286,12 +293,12 @@ export const fetchPlayerMatches = async (
       const cacheRes = await fetch(`/daily_matches.json?t=${hourTs}`);
       
       if (cacheRes.ok) {
-          onProgress("数据库下载完成，正在本地索引...", 15);
+          onProgress("📥 数据库下载完成，正在本地索引...", 15);
           const cacheData = await cacheRes.json();
           
           if (cacheData && Array.isArray(cacheData.data) && cacheData.data.length > 0) {
               const totalRecords = cacheData.data.length;
-              onProgress(`数据库索引完毕 (共 ${totalRecords} 条记录)，正在查找 "${playerName}"...`, 20);
+              onProgress(`✅ 数据库索引完毕 (共 ${totalRecords} 条记录)，正在查找 "${playerName}"...`, 20);
               
               // Filter locally with loose matching
               const hits = cacheData.data.filter((m: MatchScoreResult) => {
@@ -301,7 +308,7 @@ export const fetchPlayerMatches = async (
               });
               
               if (hits.length > 0) {
-                  onProgress(`✅ 离线库检索成功！找到 ${hits.length} 场记录`, 100);
+                  onProgress(`🎉 离线库检索成功！找到 ${hits.length} 场记录`, 100);
                   // Return sorted by date (if possible, currently matchTime is a string, assuming fetch order is roughly chronological)
                   return hits;
               } else {
@@ -316,6 +323,12 @@ export const fetchPlayerMatches = async (
   }
 
   // --- FALLBACK TO LIVE API ---
+  onProgress("🔎 离线库未命中，正在扫描华体汇实时赛事列表...", 10);
+  const games = await fetchGameList(config, searchConfig);
+
+  if (games.length === 0) return [];
+  onProgress(`✅ 锁定 ${games.length} 个相关赛事，开始实时检索...`, 15);
+
   let processedCount = 0;
 
   const results = await runInBatches(games, 8, async (game, index) => {
