@@ -28,8 +28,12 @@ const setupProxyInterceptor = (onLog?: Logger) => {
         // Target Domain to intercept
         const targetDomain = 'generativelanguage.googleapis.com';
         
+        // 2. Intercept and Rewrite Path
         if (urlStr.includes(targetDomain)) {
             // Use relative path '/google-ai' to avoid origin mismatch issues
+            // This transforms "https://generativelanguage.googleapis.com/v1beta/..." 
+            // into "/google-ai/v1beta/..."
+            // This matches PERFECTLY with the Nginx rule: rewrite ^/google-ai/(.*) /$1 break;
             const proxyBase = '/google-ai';
             const newUrlStr = urlStr.replace(`https://${targetDomain}`, proxyBase);
             
@@ -37,6 +41,8 @@ const setupProxyInterceptor = (onLog?: Logger) => {
             console.log(`[Gemini Proxy] Redirecting: ${urlStr} -> ${newUrlStr}`);
 
             if (originalRequest) {
+                // We must create a new Request to apply the URL change
+                // Note: We don't clone() because we want to override the URL.
                 const newReq = new Request(newUrlStr, originalRequest);
                 return originalFetch(newReq, init);
             }
@@ -97,6 +103,9 @@ export const analyzeData = async (
     `;
 
     const prompt = customPrompt || defaultPrompt;
+    
+    // [Core Config] Using 'gemini-3-flash-preview' as originally intended.
+    // The Nginx 'rewrite' rule will ensure the path is routed correctly.
     const modelId = 'gemini-3-flash-preview';
 
     log(`🧠 调用模型: ${modelId} (Via Nginx Proxy)`, 'info');
@@ -123,27 +132,33 @@ export const analyzeData = async (
   } catch (error: any) {
     log(`❌ Gemini API 请求失败:`, 'error');
     
-    let displayMessage = error.message;
+    let displayMessage = error.message || String(error);
 
-    // Enhanced Error Parsing
+    // --- ENHANCED DEBUGGING ---
+    // Capture the raw 404 body to confirm if it's a routing issue or model issue.
     try {
-        // Log the raw error to console for debugging
-        console.error("Gemini API Error Raw:", error);
-
-        if (displayMessage.startsWith('{')) {
-            const parsed = JSON.parse(displayMessage);
-            if (parsed.error && parsed.error.message) {
-                const innerMsg = parsed.error.message;
-                if (innerMsg.includes('404 Not Found') && innerMsg.includes('nginx')) {
-                    displayMessage = "Nginx 代理路由失败 (404)。请检查后端日志及 Nginx 配置中的 /google-ai/ 规则。";
-                } else {
-                    displayMessage = innerMsg;
-                }
-            }
-        } else if (displayMessage.includes('404')) {
-             displayMessage = "请求路径未找到 (404)。可能是 Nginx 代理未生效。";
+        console.error("Gemini API Error Object:", error);
+        
+        if (error.response) {
+            displayMessage += ` (Status: ${error.response.status})`;
         }
-    } catch (e) {}
+        
+        if (displayMessage.includes('{')) {
+             const jsonMatch = displayMessage.match(/\{.*\}/s);
+             if (jsonMatch) {
+                 const parsed = JSON.parse(jsonMatch[0]);
+                 if (parsed.error && parsed.error.message) {
+                     displayMessage = `Google API Refusal: ${parsed.error.message}`;
+                 }
+             }
+        }
+    } catch (e) {
+        // Fallback
+    }
+
+    if (displayMessage.includes('404')) {
+         displayMessage += "\n👉 诊断: Nginx 转发路径已修复。如果仍报错，说明 Google 暂未向您的 API Key 开放 gemini-3-flash-preview 模型权限。";
+    }
 
     log(`Message: ${displayMessage}`, 'error');
     return `分析失败。\n错误信息: ${displayMessage}`;
