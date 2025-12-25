@@ -93,6 +93,65 @@ export const App: React.FC = () => {
 
   // --- Persistence Effects ---
   
+  // --- Helpers ---
+  const addLog = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
+    // 🔍 LOG LEVEL CONTROL
+    // If LOG_LEVEL is 'production', we simplify or suppress messages
+    const logLevel = (process.env.LOG_LEVEL as string) || 'development';
+    
+    let finalMessage: string | null = message;
+
+    if (logLevel === 'production') {
+      // Rule 1: Simplify Download Start -> "同步服务端数据" (No ellipsis)
+      if (message.includes('准备下载服务端数据文件')) {
+        finalMessage = '同步服务端数据'; 
+      }
+      // Rule 2: Suppress Download Progress (use Progress Bar only)
+      else if (message.includes('下载中:')) {
+        finalMessage = null; 
+      }
+      else if (message.includes('数据解析成功')) {
+        finalMessage = null; // Too technical
+      }
+      // Rule 3: Simplify AI Init -> "正在初始化 AI 请求." (Ends with dot)
+      else if (message.includes('正在初始化 Gemini AI 请求')) {
+        finalMessage = '正在初始化 AI 请求.';
+      }
+      // Rule 4: Simplify API Key -> "Key 状态: 已加载"
+      else if (message.includes('API Key 状态')) {
+        finalMessage = 'Key 状态: 已加载';
+      }
+      // Rule 5: Simplify Model Name -> "调用 ai 模型（proxy）"
+      else if (message.includes('调用模型')) {
+        finalMessage = '调用 ai 模型（proxy）';
+      }
+      // Rule 6: Simplify Network Search Progress -> "正在检索进度: 1%"
+      else if (message.includes('[网络搜索] 正在检索')) {
+        // Extract numbers " (1/100)"
+        const match = message.match(/\((\d+)\/(\d+)\)/);
+        if (match) {
+          const current = parseInt(match[1]);
+          const total = parseInt(match[2]);
+          const percent = Math.floor((current / total) * 100);
+          finalMessage = `正在检索进度: ${percent}%`;
+        } else {
+          finalMessage = '正在检索数据...';
+        }
+      }
+      // Rule 7: Clean up technical logs
+      else if (message.includes('数据负载') || message.includes('请求已发送') || message.includes('耗时') || message.includes('解析 JSON')) {
+         finalMessage = null;
+      }
+      else if (message.includes('分析成功')) {
+         finalMessage = 'AI 分析完成';
+      }
+    }
+
+    if (finalMessage) {
+      setLogs(prev => [...prev, { timestamp: new Date().toLocaleTimeString(), message: finalMessage!, type }]);
+    }
+  };
+
   const fetchCredentials = async (isManual = false) => {
     try {
       // Add timestamp to prevent caching 404s or old data
@@ -243,12 +302,6 @@ export const App: React.FC = () => {
     setLastCacheTime('');
     setRankingSource(null);
     addLog("🗑️ 缓存已清理，下次查询将从服务器获取最新数据。", "info");
-  };
-
-
-  // --- Helpers ---
-  const addLog = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
-    setLogs(prev => [...prev, { timestamp: new Date().toLocaleTimeString(), message, type }]);
   };
 
   const updateConfig = (key: keyof ApiHeaderConfig, value: any) => setConfig(prev => ({ ...prev, [key]: value }));

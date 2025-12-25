@@ -2,7 +2,7 @@
 
 **关注青少年成长，用数据记录每一滴汗水。**
 
-这是一个基于 React + Vite 构建的现代化数据仪表盘，专为家长和教练设计。它能够从华体汇平台获取公开的羽毛球赛事数据，生成积分排名，追踪小选手的历史战绩，并利用 **Google Gemini AI** 提供智能的战术分析和建议。
+这是一个基于 React + Vite 构建的现代化数据仪表盘，专为家长和教练设计。它能够从获取公开的羽毛球赛事数据，生成积分排名，追踪小选手的历史战绩，并利用 **Google Gemini AI** 提供智能的战术分析和建议。
 
 ![Dashboard Preview](https://via.placeholder.com/800x450.png?text=Dashboard+Preview)
 
@@ -105,14 +105,21 @@ cd huatihui-data-insight
 ```
 
 ### 3. 构建镜像
-构建时需注入 API Key（Vite 构建时需要打包进前端代码）：
+构建时需要注入参数，特别是 **域名** 配置，这对于 Nginx 正确处理 AI 转发请求至关重要。
 
 ```bash
 docker build \
   --build-arg API_KEY="your_gemini_api_key_here" \
+  --build-arg DOMAIN_NAME="sports.ymq.me" \
   -t hth-dashboard \
   -f Dockerfile.txt .
 ```
+
+*   `API_KEY` (必填): 您的 Google Gemini API Key。
+*   `DOMAIN_NAME` (可选): 您的服务域名或 IP。
+    *   作用：自动替换 `nginx.conf` 中的 `server_name` 配置。
+    *   默认值：`localhost`。
+    *   **注意**：如果不设置正确的域名，Nginx 转发可能会失败。
 
 ### 4. 运行容器
 启动时注入华体汇凭证，并**挂载数据卷**以保证重启后数据不丢失。

@@ -320,7 +320,10 @@ async function fetchRankingsForGame(game) {
                         playerName: r.playerName,
                         rank: r.rank,
                         score: r.score,
-                        club: r.club || r.teamName
+                        club: r.club || r.teamName,
+                        // NEW FIELDS ADDED
+                        itemType: item.itemType, // 项目类型
+                        name: item.itemName      // 项目名字
                     });
                 });
             }

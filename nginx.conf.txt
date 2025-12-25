@@ -1,7 +1,7 @@
 server {
     listen 80;
     # 匹配 localhost 和 任意 IP 访问
-    server_name localhost;
+    server_name localhost CHANGE.ME _;
     
     root /var/www/html;
     index index.html;

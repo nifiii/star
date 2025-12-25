@@ -25,9 +25,15 @@ RUN npm install
 COPY . .
 
 # 4. 构建 React 应用
-# 接受构建参数 API_KEY (Vite 在构建时需要将其注入到前端代码中)
+# 接受构建参数 API_KEY
 ARG API_KEY
 ENV API_KEY=$API_KEY
+
+# [新增] 接受日志级别参数 (development | production)
+# 默认为 production，构建时可通过 --build-arg LOG_LEVEL="development" 开启详细日志
+ARG LOG_LEVEL="production"
+ENV LOG_LEVEL=$LOG_LEVEL
+
 RUN npm run build
 
 # 5. 配置 Nginx
@@ -36,6 +42,11 @@ RUN rm -rf /var/www/html/* && cp -r dist/* /var/www/html/
 
 # 复制自定义的 Nginx 配置
 COPY nginx.conf.txt /etc/nginx/conf.d/default.conf
+
+# [新增] 接收域名构建参数，替换 Nginx 配置中的占位符
+# 默认为 localhost，构建时可通过 --build-arg DOMAIN_NAME="your.domain.com" 覆盖
+ARG DOMAIN_NAME="localhost"
+RUN sed -i "s/CHANGE.ME/${DOMAIN_NAME}/g" /etc/nginx/conf.d/default.conf
 
 # 6. 数据持久化配置
 # 创建数据目录用于挂载 Volume

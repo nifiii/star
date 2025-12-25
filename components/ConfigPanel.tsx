@@ -43,7 +43,8 @@ const GROUP_SECTIONS = [
     id: 'level',
     title: '学段 / 级别 - [且/AND关系]',
     options: [
-      { label: '儿童/小学', value: '儿童,小学' },
+      { label: '儿童', value: '儿童' },
+      { label: '小学', value: '小学' },
       { label: '少年', value: '少年' },
       { label: '初中', value: '初中' },
       { label: '高中', value: '高中' },

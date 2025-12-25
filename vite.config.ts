@@ -18,6 +18,8 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       'process.env.API_KEY': JSON.stringify(env.API_KEY),
+      // [新增] 注入 LOG_LEVEL，默认为 development
+      'process.env.LOG_LEVEL': JSON.stringify(env.LOG_LEVEL || 'development'),
       // Polyfill process.env for other libraries if needed
       'process.env': {}
     },
