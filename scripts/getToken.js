@@ -235,18 +235,17 @@ async function loginAndSave() {
 // --- Scraper Functions ---
 
 async function fetchGameList() {
-    console.log("🔎 获取赛事列表 (范围: 广东省广州市)...");
+    console.log("🔎 获取赛事列表 (范围: 广东省全省)...");
     const url = `https://applyv3.ymq.me/public/public/getgamefulllist?t=${Date.now()}`;
     
-    // 严格限制：广东省 广州市
-    // 新增 sports_id: 1 (羽毛球)
+    // UPDATED: 广东省 (Remove city limit), Status 10 (Ended/Active per user spec), Page Size 200
+    // User correction: statuss: [20] -> status: [10]
     const requestBody = {
         page_num: 1,
-        page_size: 100,
+        page_size: 200,
         sports_id: 1,  
-        statuss: [10], // 已结束
-        province: ["广东省"],
-        city: ["广州市"] 
+        status: [10], // Corrected per user: 10 means Ended/Completed
+        province: ["广东省"] 
     };
 
     try {
@@ -276,7 +275,7 @@ async function fetchGameList() {
                 console.log(`   API 首条数据日期: ${debugDate} | 名称: ${sampleGame.game_name}`);
             }
 
-            console.log(`   API 返回 ${list.length} 个广州赛事。正在筛选近一年数据...`);
+            console.log(`   API 返回 ${list.length} 个广东省赛事。正在筛选近一年数据...`);
 
             const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
             
@@ -587,8 +586,9 @@ async function runDailyUpdate() {
     if (!updatesMade) {
         console.log("✅ 数据已是最新，仅更新时间戳。");
         try {
-            const rPayload = { updatedAt: now, dateString: dateStr, count: existingRankData.length, city: "广州市", status: "active", data: existingRankData };
-            const mPayload = { updatedAt: now, dateString: dateStr, count: existingMatchData.length, city: "广州市", status: "active", data: existingMatchData };
+            // Update Scope Label: "广东省"
+            const rPayload = { updatedAt: now, dateString: dateStr, count: existingRankData.length, city: "广东省", status: "active", data: existingRankData };
+            const mPayload = { updatedAt: now, dateString: dateStr, count: existingMatchData.length, city: "广东省", status: "active", data: existingMatchData };
             fs.writeFileSync(rankingsPath, JSON.stringify(rPayload));
             fs.writeFileSync(matchesPath, JSON.stringify(mPayload));
         } catch(e) { console.error("Write error:", e.message); }
@@ -601,10 +601,10 @@ async function runDailyUpdate() {
     console.log(`💾 正在写入磁盘 (${dataDir})...`);
     try {
         fs.writeFileSync(rankingsPath, JSON.stringify({
-            updatedAt: now, dateString: dateStr, count: mergedRankings.length, city: "广州市", status: "active", data: mergedRankings
+            updatedAt: now, dateString: dateStr, count: mergedRankings.length, city: "广东省", status: "active", data: mergedRankings
         }));
         fs.writeFileSync(matchesPath, JSON.stringify({
-            updatedAt: now, dateString: dateStr, count: mergedMatches.length, city: "广州市", status: "active", data: mergedMatches
+            updatedAt: now, dateString: dateStr, count: mergedMatches.length, city: "广东省", status: "active", data: mergedMatches
         }));
         console.log(`🎉 更新成功! 新增排名: ${newRankings.length}, 新增比分: ${newMatches.length}`);
     } catch(e) {
@@ -645,7 +645,7 @@ function scheduleNextRun() {
 // --- Entry Point ---
 
 (async () => {
-    console.log("🟢 脚本启动 (v1.0.3 - Enhanced Item Capture)...");
+    console.log("🟢 脚本启动 (v1.0.4 - Guangdong Full Scope)...");
     
     // 1. 初始化环境 (目录 & 链接)
     initEnvironment();
