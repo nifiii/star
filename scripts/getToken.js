@@ -307,82 +307,83 @@ async function fetchGameList() {
 async function fetchRankingsForGame(game) {
     const allRanks = [];
     try {
-        // Attempt 1: Fetch Items (Standard Individual Events)
-        let itemsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', {
-            method: 'POST',
-            headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
-            body: JSON.stringify({
-                body: { raceId: game.id },
-                header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" }
-            })
-        });
-        let itemsData = await itemsRes.json();
-        let isGroupMode = false;
+        const fetchConfig = {
+             method: 'POST',
+             headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
+             body: JSON.stringify({
+                 body: { raceId: game.id },
+                 header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" }
+             })
+        };
 
-        // Attempt 2: Fetch Groups (Team Events) if Items are empty
-        if (!itemsData?.detail || itemsData.detail.length === 0) {
-            // Log fallback attempt
-            const groupsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allGroups.do', {
-                method: 'POST',
-                headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
-                body: JSON.stringify({
-                    body: { raceId: game.id },
-                    header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" }
-                })
-            });
-            const groupsData = await groupsRes.json();
-            
-            if (groupsData?.detail && groupsData.detail.length > 0) {
-                itemsData = groupsData;
-                isGroupMode = true;
-                console.log(`   ℹ️ [${game.game_name}] 启用团体/分组模式 (Fetched via allGroups.do)`);
-            }
+        // 1. 同时请求 Items (单项) 和 Groups (团体)
+        const [itemsRes, groupsRes] = await Promise.all([
+            fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', fetchConfig).catch(e => ({ json: () => ({ detail: [] }) })),
+            fetch('https://race.ymq.me/webservice/appWxRace/allGroups.do', fetchConfig).catch(e => ({ json: () => ({ detail: [] }) }))
+        ]);
+        
+        const itemsData = await itemsRes.json();
+        const groupsData = await groupsRes.json();
+        
+        // 2. 合并数据源
+        const itemsList = itemsData?.detail || [];
+        const groupsList = groupsData?.detail || [];
+        
+        // 如果两者都为空，直接返回
+        if (itemsList.length === 0 && groupsList.length === 0) return [];
+
+        // 3. 统一处理列表的辅助函数
+        const processList = async (list, isGroup) => {
+             for (const item of list) {
+                const rankPayload = {
+                    raceId: game.id,
+                    groupId: isGroup ? item.id : null,
+                    itemId: isGroup ? null : item.id
+                };
+
+                const rankRes = await fetch('https://race.ymq.me/webservice/appWxRank/showRankScore.do', {
+                    method: 'POST',
+                    headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
+                    body: JSON.stringify({
+                        body: rankPayload,
+                        header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" }
+                    })
+                });
+                const rankData = await rankRes.json();
+                
+                if (rankData?.detail) {
+                    rankData.detail.forEach(r => {
+                        const gName = item.groupName || '';
+                        const iName = item.itemName || item.itemType || '';
+                        const extendedGroupName = `${gName} ${iName}`.trim();
+                        
+                        allRanks.push({
+                            raceId: game.id,
+                            game_name: game.game_name,
+                            groupName: extendedGroupName || '未知组别', 
+                            playerName: r.playerName,
+                            rank: r.rank,
+                            score: r.score,
+                            club: r.club || r.teamName,
+                            itemType: item.itemType, 
+                            name: item.itemName
+                        });
+                    });
+                }
+                await wait(100);
+             }
+        };
+
+        // 4. 分别处理
+        if (itemsList.length > 0) {
+            await processList(itemsList, false);
         }
         
-        if (!itemsData?.detail) return [];
-
-        for (const item of itemsData.detail) {
-            // Determine parameter mapping based on mode
-            const rankPayload = {
-                raceId: game.id,
-                groupId: isGroupMode ? item.id : null,
-                itemId: isGroupMode ? null : item.id
-            };
-
-            const rankRes = await fetch('https://race.ymq.me/webservice/appWxRank/showRankScore.do', {
-                method: 'POST',
-                headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
-                body: JSON.stringify({
-                    body: rankPayload,
-                    header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" }
-                })
-            });
-            const rankData = await rankRes.json();
-            
-            if (rankData?.detail) {
-                rankData.detail.forEach(r => {
-                    // FIX: Capture Item Type in GroupName for easier filtering later
-                    // Handle potential undefined groupName/itemName if from allGroups
-                    const gName = item.groupName || '';
-                    const iName = item.itemName || item.itemType || '';
-                    const extendedGroupName = `${gName} ${iName}`.trim();
-                    
-                    allRanks.push({
-                        raceId: game.id,
-                        game_name: game.game_name,
-                        groupName: extendedGroupName || '未知组别', 
-                        playerName: r.playerName,
-                        rank: r.rank,
-                        score: r.score,
-                        club: r.club || r.teamName,
-                        // NEW FIELDS ADDED
-                        itemType: item.itemType, // 项目类型
-                        name: item.itemName      // 项目名字
-                    });
-                });
-            }
-            await wait(100);
+        if (groupsList.length > 0) {
+            console.log(`   ℹ️ [${game.game_name}] 发现团体/分组数据 (${groupsList.length} 项)`);
+            await processList(groupsList, true);
         }
+
     } catch (e) {
         console.warn(`   ⚠️ [${game.game_name}] 排名抓取部分失败: ${e.message}`);
     }

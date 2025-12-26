@@ -288,44 +288,39 @@ export const fetchAggregatedRankings = async (
       }
       const effectiveSnTime = Date.now();
       
-      // 1. Attempt to Get Items (Individual)
-      let itemsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', {
-        method: 'POST',
-        headers: getHeaders(config, 'https://apply.ymq.me/'),
-        body: JSON.stringify({
+      const fetchBody = {
           body: { raceId: game.id },
           header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "wx" }
-        })
-      });
-      let itemsData = await itemsRes.json();
-      let isGroupMode = false;
-
-      // 2. Fallback to Groups (Team) if Items Empty
-      if (!itemsData?.detail || itemsData.detail.length === 0) {
-         try {
-             const groupsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allGroups.do', {
-                method: 'POST',
-                headers: getHeaders(config, 'https://apply.ymq.me/'),
-                body: JSON.stringify({
-                  body: { raceId: game.id },
-                  header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "wx" }
-                })
-             });
-             const groupsData = await groupsRes.json();
-             if (groupsData?.detail && groupsData.detail.length > 0) {
-                 itemsData = groupsData;
-                 isGroupMode = true;
-             }
-         } catch(e) {
-             // Ignore fallback error
-         }
-      }
+      };
       
-      if (!itemsData?.detail) return [];
+      const fetchOptions = {
+          method: 'POST',
+          headers: getHeaders(config, 'https://apply.ymq.me/'),
+          body: JSON.stringify(fetchBody)
+      };
+
+      // 1. Fetch Items (Standard Individual) and Groups (Team) Concurrently
+      const [itemsRes, groupsRes] = await Promise.all([
+         fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', fetchOptions).catch(() => ({ json: () => ({ detail: [] }) })),
+         fetch('https://race.ymq.me/webservice/appWxRace/allGroups.do', fetchOptions).catch(() => ({ json: () => ({ detail: [] }) }))
+      ]);
+
+      // @ts-ignore
+      const itemsData = await itemsRes.json();
+      // @ts-ignore
+      const groupsData = await groupsRes.json();
+
+      const itemsList = itemsData?.detail || [];
+      const groupsList = groupsData?.detail || [];
+      
+      // 2. Combine and mark source
+      const allTargets = [
+          ...itemsList.map((i: any) => ({ ...i, _isGroup: false })),
+          ...groupsList.map((g: any) => ({ ...g, _isGroup: true }))
+      ];
 
       // 3. Filter Items (Client side optimization)
-      // Note: Groups might lack 'itemType' but have 'groupName'
-      const relevantItems = itemsData.detail.filter((item: any) => {
+      const relevantItems = allTargets.filter((item: any) => {
         const gName = (item.groupName || '').toUpperCase();
         const iType = (item.itemType || item.itemName || '').toUpperCase(); 
         
@@ -348,8 +343,9 @@ export const fetchAggregatedRankings = async (
       // 4. Get Ranks for Items/Groups
       await Promise.all(relevantItems.map(async (item: any) => {
         try {
-          const groupId = isGroupMode ? item.id : null;
-          const itemId = isGroupMode ? null : item.id;
+          const isGroup = item._isGroup;
+          const groupId = isGroup ? item.id : null;
+          const itemId = isGroup ? null : item.id;
 
           const rankRes = await fetch('https://race.ymq.me/webservice/appWxRank/showRankScore.do', {
             method: 'POST',
