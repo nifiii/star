@@ -417,9 +417,12 @@ async function fetchMatchesForGame(game) {
             }
 
             rows.forEach(m => {
-                const fullGroupName = m.fullName || m.groupName || '';
+                // Determine raw name for logic check (Double/Team)
+                // Do not assign this to both fields to avoid duplication error
+                const nameForLogic = m.fullName || m.groupName || '';
+                
                 // 1. 判断是否为双打或团体 (根据 fullName 是否包含 双 或 团)
-                const isDoublesOrTeam = fullGroupName.includes('双') || fullGroupName.includes('团');
+                const isDoublesOrTeam = nameForLogic.includes('双') || nameForLogic.includes('团');
 
                 let p1 = '';
                 let p2 = '';
@@ -481,8 +484,9 @@ async function fetchMatchesForGame(game) {
                     raceId: game.id,
                     game_name: game.game_name,
                     matchId: m.id,
-                    fullName: fullGroupName, // [新增字段]
-                    groupName: fullGroupName, 
+                    // Use cross-fallback to ensure fields are populated but distinct if possible
+                    fullName: m.fullName || m.groupName || '', 
+                    groupName: m.groupName || m.fullName || '', 
                     playerA: p1,
                     playerB: p2,
                     score: finalScore,
