@@ -24,6 +24,92 @@ const getHeaders = (config: ApiHeaderConfig, referer = 'https://sports.ymq.me/')
   };
 };
 
+// --- Helper: String Normalization ---
+const normalize = (str: string | undefined | null) => (str || '').trim().toUpperCase();
+
+// --- Helper: Filter Logic Engine ---
+// Returns TRUE if the item matches ALL active filters
+const isRankMatch = (item: any, config: SearchConfig): boolean => {
+    const fullText = normalize(
+        (item.groupName || '') + ' ' + 
+        (item.itemType || '') + ' ' + 
+        (item.name || item.itemName || '')
+    );
+
+    // 1. Gender Filter
+    if (config.playerGender) {
+        if (config.playerGender === 'M' && !fullText.includes('男')) return false;
+        if (config.playerGender === 'F' && !fullText.includes('女')) return false;
+    }
+
+    // 2. U-Series (OR Logic): e.g., "U8,U9" -> Match if ANY exists
+    const uKeys = normalize(config.uKeywords).split(/[,，]/).filter(k => k);
+    if (uKeys.length > 0) {
+        const hasMatch = uKeys.some(k => fullText.includes(k));
+        if (!hasMatch) return false;
+    }
+
+    // 3. Level/School (AND Logic): e.g., "小学,乙" -> Match if ALL exist
+    const levelKeys = normalize(config.levelKeywords).split(/[,，]/).filter(k => k);
+    if (levelKeys.length > 0) {
+        const allMatch = levelKeys.every(k => fullText.includes(k));
+        if (!allMatch) return false;
+    }
+
+    // 4. Item Type (OR Logic): e.g., "男单,男双"
+    const itemKeys = normalize(config.itemKeywords).split(/[,，]/).filter(k => k);
+    if (itemKeys.length > 0) {
+        const hasMatch = itemKeys.some(k => fullText.includes(k));
+        if (!hasMatch) return false;
+    }
+
+    // 5. Game Keywords (Regex)
+    const gameKeys = normalize(config.gameKeywords).split(/[,，]/).filter(k => k);
+    if (gameKeys.length > 0) {
+        const gameName = normalize(item.game_name);
+        const hasMatch = gameKeys.some(k => gameName.includes(k));
+        if (!hasMatch) return false;
+    }
+
+    // 6. Player Name (Partial)
+    if (config.targetPlayerName) {
+        const target = normalize(config.targetPlayerName);
+        const pName = normalize(item.playerName);
+        if (!pName.includes(target)) return false;
+    }
+
+    return true;
+};
+
+const isMatchRecordMatch = (match: any, config: SearchConfig, strictPlayerName?: string): boolean => {
+    // 1. Target Player Name Check (Strict for specific player search)
+    if (strictPlayerName) {
+        const target = normalize(strictPlayerName);
+        const pA = normalize(match.playerA || match.mateOne || match.user1Name);
+        const pB = normalize(match.playerB || match.mateTwo || match.user2Name);
+        
+        // Must involve the player
+        if (!pA.includes(target) && !pB.includes(target)) return false;
+    }
+
+    // 2. Game Keywords
+    const gameKeys = normalize(config.gameKeywords).split(/[,，]/).filter(k => k);
+    if (gameKeys.length > 0) {
+        const gameName = normalize(match.game_name);
+        const hasMatch = gameKeys.some(k => gameName.includes(k));
+        if (!hasMatch) return false;
+    }
+
+    // 3. Gender Filter (Inferred from Group/Item Name)
+    if (config.playerGender) {
+        const fullText = normalize((match.groupName || match.fullName || '') + ' ' + (match.itemType || ''));
+        if (config.playerGender === 'M' && !fullText.includes('男')) return false;
+        if (config.playerGender === 'F' && !fullText.includes('女')) return false;
+    }
+
+    return true;
+};
+
 // --- Helper: Concurrency Limit Executor ---
 async function runInBatches<T, R>(items: T[], batchSize: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   let results: R[] = [];
@@ -54,18 +140,16 @@ async function loadStaticData<T>(
     type: 'rankings' | 'matches',
     onProgress: (msg: string, progress: number) => void
 ): Promise<T[]> {
-    // 1. Check Memory Cache
     if (MEMORY_CACHE[type] && (Date.now() - MEMORY_CACHE[type]!.timestamp < MEMORY_CACHE_TTL)) {
         onProgress("🧠 读取本地缓存数据...", 10);
         return MEMORY_CACHE[type]!.data as T[];
     }
     
-    // 2. Download from Server
     const filename = type === 'rankings' ? 'daily_rankings.json' : 'daily_matches.json';
     onProgress(`📡 准备下载服务端数据文件 /${filename}...`, 5);
     
     try {
-        const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); // Cache bust every hour
+        const hourTs = Math.floor(Date.now() / (1000 * 60 * 60)); 
         const res = await fetch(`/${filename}?t=${hourTs}`);
         
         if (!res.ok) {
@@ -79,7 +163,6 @@ async function loadStaticData<T>(
 
         const reader = res.body?.getReader();
         if (!reader) {
-             // Fallback if streams not supported
              const json = await res.json();
              return processJson(json, type, onProgress);
         }
@@ -89,22 +172,16 @@ async function loadStaticData<T>(
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
             if (value) {
                 chunks.push(value);
                 loaded += value.length;
-                
                 if (total > 0) {
                     const dlPercent = Math.floor((loaded / total) * 100);
-                    // Map 0-100% download to 5-20% overall progress
                     const stepProgress = 5 + Math.floor((loaded / total) * 15); 
-                    
                     const loadedMB = (loaded / (1024 * 1024)).toFixed(2);
                     const totalMB = (total / (1024 * 1024)).toFixed(2);
-                    
                     onProgress(`⬇️ 下载中: ${loadedMB}MB / ${totalMB}MB (${dlPercent}%)`, stepProgress);
                 } else {
-                    // Unknown length
                     const loadedMB = (loaded / (1024 * 1024)).toFixed(2);
                     onProgress(`⬇️ 下载中: ${loadedMB}MB...`, 10);
                 }
@@ -113,7 +190,6 @@ async function loadStaticData<T>(
 
         onProgress("📦 下载完成，正在解析 JSON...", 22);
 
-        // Combine chunks
         const allChunks = new Uint8Array(loaded);
         let position = 0;
         for (const chunk of chunks) {
@@ -133,14 +209,14 @@ async function loadStaticData<T>(
     return [];
 }
 
-// 1. Get Game Full List
+// 1. Get Game Full List (with Province/City Filter)
 export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: SearchConfig): Promise<GameBasicInfo[]> => {
   const effectiveSnTime = Date.now();
   const url = `https://applyv3.ymq.me/public/public/getgamefulllist?t=${effectiveSnTime}`;
   
-  // Normalize Province/City
-  let rawProvince = searchConfig.province.trim();
-  let rawCity = searchConfig.city.trim();
+  // Normalize Province/City logic
+  let rawProvince = (searchConfig.province || '').trim();
+  let rawCity = (searchConfig.city || '').trim();
   const municipalities = ['北京', '上海', '天津', '重庆'];
   const provMuniMatch = municipalities.find(m => rawProvince.startsWith(m));
   const cityMuniMatch = municipalities.find(m => rawCity.startsWith(m));
@@ -179,12 +255,15 @@ export const fetchGameList = async (config: ApiHeaderConfig, searchConfig: Searc
     if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     
-    const keywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
-    const nameRegex = keywords.length > 0 ? new RegExp(keywords.join('|'), 'i') : null;
-
+    // Filter by Game Keywords immediately
+    const gameKeys = normalize(searchConfig.gameKeywords).split(/[,，]/).filter(k => k);
+    
     if (data && data.data && Array.isArray(data.data.list)) {
       return data.data.list
-        .filter((game: any) => nameRegex ? nameRegex.test(game.game_name) : true)
+        .filter((game: any) => {
+            if (gameKeys.length === 0) return true;
+            return gameKeys.some((k: string) => normalize(game.game_name).includes(k));
+        })
         .map((game: any) => ({
           id: game.id,
           game_name: game.game_name,
@@ -212,49 +291,7 @@ export const fetchAggregatedRankings = async (
   if (sourceData.length > 0) {
       onProgress(`🔍 正在本地筛选...`, 25);
       
-      const uKeys = searchConfig.uKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
-      const levelKeys = searchConfig.levelKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
-      const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
-      const gameKeywords = searchConfig.gameKeywords.split(',').map(k => k.trim()).filter(k => k);
-      const nameRegex = gameKeywords.length > 0 ? new RegExp(gameKeywords.join('|'), 'i') : null;
-      const targetName = (searchConfig.targetPlayerName || '').trim();
-
-      const filtered = sourceData.filter((rank: PlayerRank) => {
-           // 1. 赛事名称筛选 (始终生效)
-           if (nameRegex && !nameRegex.test(rank.game_name)) return false;
-
-           // 2. 名字搜索优先策略
-           if (targetName) {
-               return rank.playerName.includes(targetName);
-           }
-
-           // 3. 常规筛选
-           if (targetName && !rank.playerName.includes(targetName)) return false;
-
-           const gName = (rank.groupName || '').toUpperCase();
-           
-           // Group Filtering Logic
-           const hasU = uKeys.length > 0;
-           const hasLevel = levelKeys.length > 0;
-           let groupMatched = true;
-
-           if (hasU || hasLevel) {
-              const matchesU = hasU && uKeys.some(k => gName.includes(k));
-              const matchesLevel = hasLevel && levelKeys.every(k => gName.includes(k));
-              if (hasU && !hasLevel) groupMatched = matchesU;
-              else if (!hasU && hasLevel) groupMatched = matchesLevel;
-              else groupMatched = matchesU || matchesLevel;
-           }
-
-           if (!groupMatched) return false;
-
-           if (typeKeys.length > 0) {
-               const rAny = rank as any;
-               const fullText = ((rAny.groupName || '') + ' ' + (rAny.game_name || '') + ' ' + (rAny.itemType || '') + ' ' + (rAny.itemName || '')).toUpperCase();
-               if (!typeKeys.some(k => fullText.includes(k.toUpperCase()))) return false;
-           }
-           return true;
-      });
+      const filtered = sourceData.filter((rank) => isRankMatch(rank, searchConfig));
 
       if (filtered.length > 0) {
           onProgress(`🎉 本地命中！找到 ${filtered.length} 条数据`, 100);
@@ -272,10 +309,6 @@ export const fetchAggregatedRankings = async (
   }
 
   onProgress(`✅ 锁定 ${games.length} 个相关赛事，开始检索...`, 35);
-
-  const uKeys = searchConfig.uKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
-  const levelKeys = searchConfig.levelKeywords.split(',').map(k => k.trim().toUpperCase()).filter(k => k);
-  const typeKeys = searchConfig.itemKeywords.split(',').map(k => k.trim()).filter(k => k);
   
   let processedCount = 0;
   
@@ -287,19 +320,17 @@ export const fetchAggregatedRankings = async (
         onProgress(`[网络搜索] 正在检索: ${game.game_name} (${processedCount}/${games.length})`, Math.floor((processedCount / games.length) * 50) + 35);
       }
       const effectiveSnTime = Date.now();
-      
       const fetchBody = {
           body: { raceId: game.id },
           header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "wx" }
       };
-      
       const fetchOptions = {
           method: 'POST',
           headers: getHeaders(config, 'https://apply.ymq.me/'),
           body: JSON.stringify(fetchBody)
       };
 
-      // 1. Fetch Items (Standard Individual) and Groups (Team) Concurrently
+      // 1. Fetch Groups/Items
       const [itemsRes, groupsRes] = await Promise.all([
          fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', fetchOptions).catch(() => ({ json: () => ({ detail: [] }) })),
          fetch('https://race.ymq.me/webservice/appWxRace/allGroups.do', fetchOptions).catch(() => ({ json: () => ({ detail: [] }) }))
@@ -313,34 +344,31 @@ export const fetchAggregatedRankings = async (
       const itemsList = itemsData?.detail || [];
       const groupsList = groupsData?.detail || [];
       
-      // 2. Combine and mark source
       const allTargets = [
           ...itemsList.map((i: any) => ({ ...i, _isGroup: false })),
           ...groupsList.map((g: any) => ({ ...g, _isGroup: true }))
       ];
 
-      // 3. Filter Items (Client side optimization)
+      // 2. Pre-Filter Items (Client side optimization to save API calls)
+      // We reconstruct a mock "Rank" object to test against isRankMatch filter
       const relevantItems = allTargets.filter((item: any) => {
-        const gName = (item.groupName || '').toUpperCase();
-        const iType = (item.itemType || item.itemName || '').toUpperCase(); 
-        
-        const hasU = uKeys.length > 0;
-        const hasLevel = levelKeys.length > 0;
-        let groupMatched = true;
-
-        if (hasU || hasLevel) {
-           const matchesU = hasU && uKeys.some(k => gName.includes(k));
-           const matchesLevel = hasLevel && levelKeys.every(k => gName.includes(k));
-           if (hasU && !hasLevel) groupMatched = matchesU;
-           else if (!hasU && hasLevel) groupMatched = matchesLevel;
-           else groupMatched = matchesU || matchesLevel;
-        }
-
-        if (!groupMatched) return false;
-        return typeKeys.length === 0 || typeKeys.some(k => iType.includes(k) || gName.includes(k));
+          const mockRank = {
+              groupName: item.groupName,
+              itemType: item.itemType,
+              name: item.itemName, // API field varies
+              itemName: item.itemName,
+              game_name: game.game_name,
+              // We don't have playerName yet, so we pass empty to skip that check momentarily
+              // OR we skip the player name check here and do it after fetching
+              playerName: '' 
+          };
+          
+          // Use a config without player name for pre-filtering groups
+          const configForGroup = { ...searchConfig, targetPlayerName: '' };
+          return isRankMatch(mockRank, configForGroup);
       });
 
-      // 4. Get Ranks for Items/Groups
+      // 3. Get Ranks for Relevant Items/Groups
       await Promise.all(relevantItems.map(async (item: any) => {
         try {
           const isGroup = item._isGroup;
@@ -358,10 +386,7 @@ export const fetchAggregatedRankings = async (
           const rankData = await rankRes.json();
           if (rankData?.detail) {
             rankData.detail.forEach((r: any) => {
-              const targetName = (searchConfig.targetPlayerName || '').trim();
-              if (targetName && !r.playerName.includes(targetName)) return;
-
-              ranksInGame.push({
+              const rankObj: PlayerRank = {
                 raceId: game.id,
                 game_name: game.game_name,
                 groupName: item.groupName || '未知组别',
@@ -369,7 +394,12 @@ export const fetchAggregatedRankings = async (
                 rank: r.rank,
                 score: r.score,
                 club: r.club || r.teamName
-              });
+              };
+              
+              // Final check (including Player Name which we skipped in pre-filter)
+              if (isRankMatch(rankObj, searchConfig)) {
+                  ranksInGame.push(rankObj);
+              }
             });
           }
         } catch (innerE) {}
@@ -391,7 +421,7 @@ export const fetchPlayerMatches = async (
   onProgress: (msg: string, progress: number) => void
 ): Promise<MatchScoreResult[]> => {
   
-  const targetName = playerName.trim().toLowerCase();
+  const targetName = playerName.trim();
   
   // --- TIER 1: LOAD CACHED DATA ---
   const sourceData = await loadStaticData<MatchScoreResult>('matches', onProgress);
@@ -400,25 +430,13 @@ export const fetchPlayerMatches = async (
   if (sourceData.length > 0) {
       onProgress(`🔍 正在本地比分库中检索 "${playerName}"...`, 25);
       
-      const hits = sourceData.filter((m: MatchScoreResult) => {
-          const pA = (m.playerA || '').toLowerCase();
-          const pB = (m.playerB || '').toLowerCase();
-          if (!pA.includes(targetName) && !pB.includes(targetName)) return false;
-          
-          if (searchConfig.playerGender) {
-             const fullText = (m.groupName || '') + (m.itemType || '');
-             // 严格匹配逻辑: 必须包含 '男' 或 '女'
-             if (searchConfig.playerGender === 'M' && !fullText.includes('男')) return false;
-             if (searchConfig.playerGender === 'F' && !fullText.includes('女')) return false;
-          }
-          return true;
-      });
+      const hits = sourceData.filter((m) => isMatchRecordMatch(m, searchConfig, targetName));
       
       if (hits.length > 0) {
           onProgress(`🎉 本地命中！找到 ${hits.length} 场记录`, 100);
           return hits;
       }
-      onProgress(`⚠️ 本地比分库未找到 "${playerName}"，准备启动网络搜索...`, 28);
+      onProgress(`⚠️ 本地比分库未找到符合条件的记录，准备启动网络搜索...`, 28);
   }
 
   // --- TIER 3: LIVE API FALLBACK ---
@@ -449,7 +467,7 @@ export const fetchPlayerMatches = async (
             raceId: game.id,
             page: 1,
             rows: 50, 
-            keyword: playerName 
+            keyword: targetName // Use backend search directly
           },
           header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "wx" }
         })
@@ -468,19 +486,6 @@ export const fetchPlayerMatches = async (
           let p2 = m.mateTwo;
           if (!p2 && Array.isArray(m.playerTwos) && m.playerTwos.length > 0) p2 = m.playerTwos[0].name;
           if (!p2) p2 = m.user2Name || m.playerB || '未知选手B';
-
-          // Double check filtering locally
-          if (!p1.toLowerCase().includes(targetName) && !p2.toLowerCase().includes(targetName)) return; 
-
-          if (searchConfig.playerGender) {
-             const groupName = m.fullName || m.groupName || '';
-             const itemType = m.itemType || m.itemName || '';
-             const fullText = groupName + itemType;
-             
-             // 严格匹配逻辑
-             if (searchConfig.playerGender === 'M' && !fullText.includes('男')) return;
-             if (searchConfig.playerGender === 'F' && !fullText.includes('女')) return;
-          }
 
           let finalScore = "0:0";
           let statusLabel = "";
@@ -501,7 +506,7 @@ export const fetchPlayerMatches = async (
              }
           }
 
-          matchesInGame.push({
+          const matchObj: MatchScoreResult = {
             raceId: game.id,
             game_name: game.game_name,
             matchId: m.id,
@@ -512,7 +517,13 @@ export const fetchPlayerMatches = async (
             score: finalScore + statusLabel,
             matchTime: m.raceTimeName || m.matchTime,
             round: m.roundName || m.rulesName || m.round || '-'
-          });
+          };
+
+          // Apply Client-Side Filter on API Results
+          // (Backend handles Name matching partially via 'keyword', but we double check strictness and gender)
+          if (isMatchRecordMatch(matchObj, searchConfig, targetName)) {
+              matchesInGame.push(matchObj);
+          }
         });
       }
     } catch (e) {
