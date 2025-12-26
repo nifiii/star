@@ -123,18 +123,40 @@ function initEnvironment() {
 
 function isDataFresh() {
     try {
+        // 1. 检查 Auth 配置是否存在且新鲜
         if (fs.existsSync(authPath)) {
             const data = JSON.parse(fs.readFileSync(authPath, 'utf-8'));
             if (data.updatedAt) {
                 // Check if updated within last 4 hours
                 const lastUpdate = new Date(data.updatedAt).getTime();
-                // If parsing fails (invalid date), it returns NaN, which is not < 4 hours
                 const diffHours = (Date.now() - lastUpdate) / (1000 * 60 * 60);
                 
-                if (diffHours < 4) {
-                    console.log(`✨ 数据依然新鲜 (上次更新: ${diffHours.toFixed(2)} 小时前)`);
-                    return true;
+                // 如果 Auth Token 太旧 (> 4 小时)，则不新鲜，需要重新登录
+                if (diffHours >= 4) {
+                    return false;
                 }
+
+                // 2. [新增] 检查数据文件内容状态
+                // 即使 Auth 是新的（比如容器刚重启或没有删 auth 文件），
+                // 如果数据文件是 "initializing" 状态（比如用户刚执行了 rm 删除），则必须强制更新。
+                try {
+                    if (fs.existsSync(rankingsPath)) {
+                        const rankData = JSON.parse(fs.readFileSync(rankingsPath, 'utf-8'));
+                        if (rankData.status === 'initializing') {
+                            console.log("   ⚠️ 检测到数据文件处于初始化状态，强制执行更新...");
+                            return false; 
+                        }
+                    } else {
+                         // 文件不存在，肯定不新鲜
+                         return false; 
+                    }
+                } catch(e) {
+                    // 读取或解析数据文件失败，视为不新鲜
+                    return false; 
+                }
+
+                console.log(`✨ 数据依然新鲜 (上次更新: ${diffHours.toFixed(2)} 小时前)`);
+                return true;
             }
         }
     } catch (e) {
@@ -285,7 +307,8 @@ async function fetchGameList() {
 async function fetchRankingsForGame(game) {
     const allRanks = [];
     try {
-        const itemsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', {
+        // Attempt 1: Fetch Items (Standard Individual Events)
+        let itemsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', {
             method: 'POST',
             headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
             body: JSON.stringify({
@@ -293,16 +316,44 @@ async function fetchRankingsForGame(game) {
                 header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" }
             })
         });
-        const itemsData = await itemsRes.json();
+        let itemsData = await itemsRes.json();
+        let isGroupMode = false;
+
+        // Attempt 2: Fetch Groups (Team Events) if Items are empty
+        if (!itemsData?.detail || itemsData.detail.length === 0) {
+            // Log fallback attempt
+            const groupsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allGroups.do', {
+                method: 'POST',
+                headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
+                body: JSON.stringify({
+                    body: { raceId: game.id },
+                    header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" }
+                })
+            });
+            const groupsData = await groupsRes.json();
+            
+            if (groupsData?.detail && groupsData.detail.length > 0) {
+                itemsData = groupsData;
+                isGroupMode = true;
+                console.log(`   ℹ️ [${game.game_name}] 启用团体/分组模式 (Fetched via allGroups.do)`);
+            }
+        }
         
         if (!itemsData?.detail) return [];
 
         for (const item of itemsData.detail) {
+            // Determine parameter mapping based on mode
+            const rankPayload = {
+                raceId: game.id,
+                groupId: isGroupMode ? item.id : null,
+                itemId: isGroupMode ? null : item.id
+            };
+
             const rankRes = await fetch('https://race.ymq.me/webservice/appWxRank/showRankScore.do', {
                 method: 'POST',
                 headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
                 body: JSON.stringify({
-                    body: { raceId: game.id, groupId: null, itemId: item.id },
+                    body: rankPayload,
                     header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" }
                 })
             });
@@ -311,12 +362,15 @@ async function fetchRankingsForGame(game) {
             if (rankData?.detail) {
                 rankData.detail.forEach(r => {
                     // FIX: Capture Item Type in GroupName for easier filtering later
-                    const extendedGroupName = `${item.groupName} ${item.itemName || item.itemType || ''}`.trim();
+                    // Handle potential undefined groupName/itemName if from allGroups
+                    const gName = item.groupName || '';
+                    const iName = item.itemName || item.itemType || '';
+                    const extendedGroupName = `${gName} ${iName}`.trim();
                     
                     allRanks.push({
                         raceId: game.id,
                         game_name: game.game_name,
-                        groupName: extendedGroupName, 
+                        groupName: extendedGroupName || '未知组别', 
                         playerName: r.playerName,
                         rank: r.rank,
                         score: r.score,
@@ -362,12 +416,59 @@ async function fetchMatchesForGame(game) {
             }
 
             rows.forEach(m => {
-                let p1 = m.mateOne;
-                if (!p1 && Array.isArray(m.playerOnes) && m.playerOnes.length > 0) p1 = m.playerOnes[0].name;
-                
-                let p2 = m.mateTwo;
-                if (!p2 && Array.isArray(m.playerTwos) && m.playerTwos.length > 0) p2 = m.playerTwos[0].name;
+                const fullGroupName = m.fullName || m.groupName || '';
+                // 1. 判断是否为双打或团体 (根据 fullName 是否包含 双 或 团)
+                const isDoublesOrTeam = fullGroupName.includes('双') || fullGroupName.includes('团');
 
+                let p1 = '';
+                let p2 = '';
+
+                if (isDoublesOrTeam) {
+                    // --- 双打/团体逻辑 ---
+                    // mateOne/mateTwo 通常为 "组合名称" (如: 张三/李四 或 飞羽一队)
+                    const comboName1 = m.mateOne || '';
+                    const comboName2 = m.mateTwo || '';
+
+                    // playerOnes/playerTwos 为具体选手列表
+                    // 提取选手名称并用 / 拼接
+                    const players1 = (Array.isArray(m.playerOnes) ? m.playerOnes : [])
+                        .map(p => p.name).filter(n => n).join('/');
+                    const players2 = (Array.isArray(m.playerTwos) ? m.playerTwos : [])
+                        .map(p => p.name).filter(n => n).join('/');
+
+                    // 组合展示逻辑: 
+                    // 如果有组合名且跟选手列表不一样，则展示 "组合名 (选手1/选手2)"
+                    // 否则直接展示选手列表 (如果没有选手列表，就展示组合名)
+                    if (comboName1 && players1 && comboName1 !== players1) {
+                        p1 = `${comboName1} (${players1})`;
+                    } else {
+                        p1 = comboName1 || players1;
+                    }
+
+                    if (comboName2 && players2 && comboName2 !== players2) {
+                        p2 = `${comboName2} (${players2})`;
+                    } else {
+                        p2 = comboName2 || players2;
+                    }
+                } else {
+                    // --- 单打逻辑 ---
+                    // 优先取 mateOne，没有则取 playerOnes 数组第一个
+                    p1 = m.mateOne;
+                    if (!p1 && Array.isArray(m.playerOnes) && m.playerOnes.length > 0) {
+                        p1 = m.playerOnes[0].name;
+                    }
+
+                    p2 = m.mateTwo;
+                    if (!p2 && Array.isArray(m.playerTwos) && m.playerTwos.length > 0) {
+                        p2 = m.playerTwos[0].name;
+                    }
+                }
+
+                // 兜底
+                p1 = p1 || '未知选手A';
+                p2 = p2 || '未知选手B';
+
+                // 分数处理
                 let finalScore = "0:0";
                 if (typeof m.scoreOne === 'number' && typeof m.scoreTwo === 'number') {
                     finalScore = `${m.scoreOne}:${m.scoreTwo}`;
@@ -379,9 +480,10 @@ async function fetchMatchesForGame(game) {
                     raceId: game.id,
                     game_name: game.game_name,
                     matchId: m.id,
-                    groupName: m.fullName || m.groupName,
-                    playerA: p1 || '未知选手A',
-                    playerB: p2 || '未知选手B',
+                    fullName: fullGroupName, // [新增字段]
+                    groupName: fullGroupName, 
+                    playerA: p1,
+                    playerB: p2,
                     score: finalScore,
                     matchTime: m.raceTimeName,
                     round: m.roundName || m.rulesName

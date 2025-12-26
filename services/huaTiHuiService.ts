@@ -223,16 +223,12 @@ export const fetchAggregatedRankings = async (
            // 1. 赛事名称筛选 (始终生效)
            if (nameRegex && !nameRegex.test(rank.game_name)) return false;
 
-           // 2. 名字搜索优先策略 (关键修改)
-           // 如果用户输入了名字，则忽略 组别/项目 筛选。
-           // 原因：本地缓存的数据源可能不包含完整的项目信息 (例如 groupName 只有 "U8" 而没有 "男单")
-           // 用户搜名字时，通常希望看到该选手所有的记录，而不受默认筛选器 (如默认选中的"男单") 的干扰。
+           // 2. 名字搜索优先策略
            if (targetName) {
                return rank.playerName.includes(targetName);
            }
 
-           // 3. 常规筛选 (仅当未输入名字时执行)
-           // 检查组别、项目等
+           // 3. 常规筛选
            if (targetName && !rank.playerName.includes(targetName)) return false;
 
            const gName = (rank.groupName || '').toUpperCase();
@@ -292,8 +288,8 @@ export const fetchAggregatedRankings = async (
       }
       const effectiveSnTime = Date.now();
       
-      // 1. Get Items
-      const itemsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', {
+      // 1. Attempt to Get Items (Individual)
+      let itemsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allItems.do', {
         method: 'POST',
         headers: getHeaders(config, 'https://apply.ymq.me/'),
         body: JSON.stringify({
@@ -301,14 +297,34 @@ export const fetchAggregatedRankings = async (
           header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "wx" }
         })
       });
-      const itemsData = await itemsRes.json();
+      let itemsData = await itemsRes.json();
+      let isGroupMode = false;
+
+      // 2. Fallback to Groups (Team) if Items Empty
+      if (!itemsData?.detail || itemsData.detail.length === 0) {
+         try {
+             const groupsRes = await fetch('https://race.ymq.me/webservice/appWxRace/allGroups.do', {
+                method: 'POST',
+                headers: getHeaders(config, 'https://apply.ymq.me/'),
+                body: JSON.stringify({
+                  body: { raceId: game.id },
+                  header: { token: config.token, snTime: effectiveSnTime, sn: config.sn, from: "wx" }
+                })
+             });
+             const groupsData = await groupsRes.json();
+             if (groupsData?.detail && groupsData.detail.length > 0) {
+                 itemsData = groupsData;
+                 isGroupMode = true;
+             }
+         } catch(e) {
+             // Ignore fallback error
+         }
+      }
       
       if (!itemsData?.detail) return [];
 
-      // 2. Filter Items (Client side optimization to reduce requests)
-      // 注意：如果是网络实时搜索，这里我们仍然保留一定的组别过滤，以防止请求量过大。
-      // 如果用户搜名字但没搜到，可能是因为这里的 item 过滤太严格了。
-      // 但对于大多数情况，保持现状可以平衡性能。
+      // 3. Filter Items (Client side optimization)
+      // Note: Groups might lack 'itemType' but have 'groupName'
       const relevantItems = itemsData.detail.filter((item: any) => {
         const gName = (item.groupName || '').toUpperCase();
         const iType = (item.itemType || item.itemName || '').toUpperCase(); 
@@ -329,14 +345,17 @@ export const fetchAggregatedRankings = async (
         return typeKeys.length === 0 || typeKeys.some(k => iType.includes(k) || gName.includes(k));
       });
 
-      // 3. Get Ranks for Items
+      // 4. Get Ranks for Items/Groups
       await Promise.all(relevantItems.map(async (item: any) => {
         try {
+          const groupId = isGroupMode ? item.id : null;
+          const itemId = isGroupMode ? null : item.id;
+
           const rankRes = await fetch('https://race.ymq.me/webservice/appWxRank/showRankScore.do', {
             method: 'POST',
             headers: getHeaders(config, 'https://apply.ymq.me/'),
             body: JSON.stringify({
-              body: { raceId: game.id, groupId: null, itemId: item.id },
+              body: { raceId: game.id, groupId: groupId, itemId: itemId },
               header: { token: config.token, snTime: Date.now(), sn: config.sn, from: "wx" }
             })
           });
@@ -349,7 +368,7 @@ export const fetchAggregatedRankings = async (
               ranksInGame.push({
                 raceId: game.id,
                 game_name: game.game_name,
-                groupName: item.groupName,
+                groupName: item.groupName || '未知组别',
                 playerName: r.playerName,
                 rank: r.rank,
                 score: r.score,
