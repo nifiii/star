@@ -130,7 +130,7 @@ docker run -d \
 ```bash
 docker logs -f my-hth-dashboard | grep "Query:"
 ```
-日志示例: `[25/Feb/2025:10:00:00 +0800] 192.168.1.1 "GET /api/matches" 200 - Query: "playerName=林丹&gameKeywords=公开赛" - UA: "Mozilla/..."`
+日志示例: `[25/Feb/2025:10:00:00 +0800] 192.168.1.1 "GET /api/matches" 200 - Query: "playerName=超级丹&gameKeywords=公开赛" - UA: "Mozilla/..."`
 
 **查看后台爬虫日志:**
 ```bash

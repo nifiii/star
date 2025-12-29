@@ -187,7 +187,7 @@ const ConfigPanel: React.FC<Props> = ({
                   value={searchConfig.targetPlayerName || ''}
                   onChange={(e) => onSearchConfigChange('targetPlayerName', e.target.value)}
                   className="w-full px-4 py-3 bg-white border-2 border-orange-200 rounded-xl text-lg text-center font-black text-slate-800 focus:outline-none focus:border-kid-orange placeholder:text-slate-300 placeholder:font-normal"
-                  placeholder="例如：林丹"
+                  placeholder="例如：超级丹"
                 />
             </div>
             

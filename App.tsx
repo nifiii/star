@@ -32,7 +32,7 @@ const INITIAL_SEARCH_CONFIG: SearchConfig = {
   uKeywords: 'U8', // Default U-series
   levelKeywords: '', // Default Level
   itemKeywords: '男单',
-  targetPlayerName: '丹神'
+  targetPlayerName: '超级丹'
 };
 
 // --- Custom Icons for Background ---
@@ -83,7 +83,7 @@ export const App: React.FC = () => {
   // Fix: Added 'API' to the allowed types to match service return type
   const [rankingSource, setRankingSource] = useState<{type: 'CACHE' | 'LIVE' | 'API', time?: string} | null>(null);
 
-  const [selectedPlayer, setSelectedPlayer] = useState<string | null>('丹神');
+  const [selectedPlayer, setSelectedPlayer] = useState<string | null>('超级丹');
   const [matchHistory, setMatchHistory] = useState<MatchScoreResult[]>([]);
   const [lastCacheTime, setLastCacheTime] = useState<string>('');
 
@@ -701,7 +701,7 @@ export const App: React.FC = () => {
             {view === 'DASHBOARD_RANKS' && (
               <div className="space-y-6">
                 
-                <div className="bg-white/95 backdrop-blur rounded-[2rem] shadow-xl border border-slate-100 overflow-hidden flex flex-col h-[700px]">
+                <div className="bg-white/95 backdrop-blur rounded-[2rem] shadow-xl border border-slate-100 overflow-hidden flex flex-col h-[400px]">
                   <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-white to-slate-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
                       <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -1011,7 +1011,7 @@ export const App: React.FC = () => {
                         <BarChart2 className="w-6 h-6" />
                       </div>
                       <div>
-                        <h3 className="text-xl font-black text-slate-800">AI 战术分析室</h3>
+                        <h3 className="text-xl font-black text-slate-800">AI 过往比赛分析</h3>
                         <p className="text-xs text-slate-500 font-bold">基于历史数据生成的智能报告</p>
                       </div>
                     </div>
