@@ -46,6 +46,7 @@ export interface PlayerRank {
   raceId: string;
   game_name: string;
   groupName: string; // Specific group name e.g. "U8 男单 A组"
+  fullGroupName?: string; // New: Raw 'name' from API, e.g. "少年组少年甲组男子单打"
   playerName: string;
   rank: number | string;
   score?: number; // Integral score

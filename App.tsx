@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ApiHeaderConfig, SearchConfig, StepStatus, MatchScoreResult, PlayerRank, LogEntry, AppView, GameBasicInfo, UserCredentials, DataCache } from './types';
 import ConfigPanel from './components/ConfigPanel';
 import LogViewer from './components/LogViewer';
 import { fetchGameList, fetchAggregatedRankings, fetchPlayerMatches, getMockRanks, getMockMatches } from './services/huaTiHuiService';
 import { analyzeData } from './services/geminiService';
-import { Download, ArrowLeft, Trophy, BarChart2, Sparkles, X, Medal, Smile, Frown, Lightbulb, Database, Zap } from 'lucide-react';
+import { Download, ArrowLeft, Trophy, BarChart2, Sparkles, X, Medal, Smile, Frown, Lightbulb, Database, Zap, PieChart } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ReactMarkdown from 'react-markdown';
 
@@ -90,6 +90,53 @@ export const App: React.FC = () => {
   const [playerAnalysis, setPlayerAnalysis] = useState<string>("");
   const [dashboardAnalysis, setDashboardAnalysis] = useState<string>("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  // --- Statistics Memo ---
+  const playerStats = useMemo(() => {
+    if (!matchHistory.length || !selectedPlayer) return { wins: 0, losses: 0, draws: 0, rate: 0 };
+    
+    let wins = 0;
+    let losses = 0;
+    let draws = 0;
+    let validGames = 0; // Games where score could be parsed
+
+    matchHistory.forEach(m => {
+        const isPlayerA = m.playerA.includes(selectedPlayer);
+        
+        if (m.score && m.score.includes(':')) {
+            // Remove non-numeric characters except the separator
+            const parts = m.score.split(':').map(p => parseInt(p.replace(/[^0-9]/g, ''), 10));
+            if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+                validGames++;
+                const scoreA = parts[0];
+                const scoreB = parts[1];
+                
+                if (scoreA === scoreB) {
+                    draws++;
+                } else if (isPlayerA) {
+                    if (scoreA > scoreB) wins++;
+                    else losses++;
+                } else {
+                    // Player B
+                    if (scoreB > scoreA) wins++;
+                    else losses++;
+                }
+            }
+        }
+    });
+
+    // Calculate Rate: wins / (wins + losses + draws) or total matches?
+    // User requested "Won X, Lost X, Rate X%". Typically rate is wins / total matches played.
+    // We use the total array length as denominator to represent "Participation", 
+    // or (wins + losses) for "Decision". Let's use total valid parsed games for accuracy, 
+    // or matchHistory.length if we want to be rough.
+    // Let's use (wins + losses) for pure Win/Loss ratio, but (wins / validGames) is better for "Win Rate".
+    
+    const denominator = validGames > 0 ? validGames : 1;
+    const rate = Math.round((wins / denominator) * 100);
+
+    return { wins, losses, draws, rate, validGames };
+  }, [matchHistory, selectedPlayer]);
 
   // --- Persistence Effects ---
   
@@ -863,15 +910,44 @@ export const App: React.FC = () => {
                 </div>
 
                 <div className="bg-white/95 backdrop-blur rounded-[2rem] shadow-xl border border-slate-100 flex flex-col h-[400px] overflow-hidden">
-                  <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                    <div className="flex items-center gap-2">
-                      <span className="bg-kid-blue w-2 h-2 rounded-full"></span>
-                      <span className="font-bold text-slate-600 text-sm md:text-base">比赛记录: {matchHistory.length} 场</span>
+                  <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-50/50 gap-4">
+                    {/* STATS HEADER */}
+                    <div className="flex flex-col gap-2">
+                         <div className="flex items-center gap-2">
+                            <span className="bg-kid-blue w-2 h-2 rounded-full"></span>
+                            <span className="font-bold text-slate-600 text-sm md:text-base">比赛记录: {matchHistory.length} 场</span>
+                         </div>
+                         {/* WIN/LOSS STATS */}
+                         {matchHistory.length > 0 && (
+                             <div className="flex items-center gap-3 text-xs md:text-sm font-bold bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
+                                <div className="flex items-center gap-1 text-green-600">
+                                   <Smile className="w-3.5 h-3.5" />
+                                   <span>胜 {playerStats.wins}</span>
+                                </div>
+                                <div className="w-px h-3 bg-slate-300"></div>
+                                <div className="flex items-center gap-1 text-red-500">
+                                   <Frown className="w-3.5 h-3.5" />
+                                   <span>输 {playerStats.losses}</span>
+                                </div>
+                                {playerStats.draws > 0 && (
+                                    <>
+                                     <div className="w-px h-3 bg-slate-300"></div>
+                                     <span className="text-slate-400">平 {playerStats.draws}</span>
+                                    </>
+                                )}
+                                <div className="w-px h-3 bg-slate-300"></div>
+                                <div className="flex items-center gap-1 text-kid-primary">
+                                   <PieChart className="w-3.5 h-3.5" />
+                                   <span>胜率 {playerStats.rate}%</span>
+                                </div>
+                             </div>
+                         )}
                     </div>
+
                     <button 
                       onClick={() => exportExcel(matchHistory, `${selectedPlayer}_history.xlsx`)}
                       disabled={matchHistory.length === 0}
-                      className="text-sm font-bold text-kid-green hover:bg-green-50 px-3 py-2 rounded-lg flex items-center gap-1 transition-colors"
+                      className="text-sm font-bold text-kid-green hover:bg-green-50 px-3 py-2 rounded-lg flex items-center gap-1 transition-colors self-end md:self-auto"
                     >
                       <Download className="w-4 h-4" /> <span className="hidden md:inline">下载表格</span>
                     </button>

@@ -360,6 +360,7 @@ async function fetchRankingsForGame(game) {
                             raceId: game.id,
                             game_name: game.game_name,
                             groupName: extendedGroupName || '未知组别', 
+                            fullGroupName: item.name || '', // Save raw API name (e.g. "少年组少年甲组男子单打") for better filtering
                             playerName: r.playerName,
                             rank: r.rank,
                             score: r.score,

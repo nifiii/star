@@ -31,6 +31,7 @@ const normalize = (str: string | undefined | null) => (str || '').trim().toUpper
 // Returns TRUE if the item matches ALL active filters
 const isRankMatch = (item: any, config: SearchConfig): boolean => {
     const fullText = normalize(
+        (item.fullGroupName || '') + ' ' + 
         (item.groupName || '') + ' ' + 
         (item.itemType || '') + ' ' + 
         (item.name || item.itemName || '')
