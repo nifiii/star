@@ -4,7 +4,7 @@ import ConfigPanel from './components/ConfigPanel';
 import LogViewer from './components/LogViewer';
 import { fetchGameList, fetchAggregatedRankings, fetchPlayerMatches, getMockRanks, getMockMatches } from './services/huaTiHuiService';
 import { analyzeData } from './services/geminiService';
-import { Download, ArrowLeft, Trophy, BarChart2, Sparkles, X, Medal, Smile, Frown, Lightbulb, Database, Zap, PieChart } from 'lucide-react';
+import { Download, ArrowLeft, Trophy, BarChart2, Sparkles, X, Medal, Smile, Frown, Lightbulb, Database, Zap, PieChart, Cloud } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ReactMarkdown from 'react-markdown';
 
@@ -80,7 +80,8 @@ export const App: React.FC = () => {
 
   // Data Cache
   const [rankings, setRankings] = useState<PlayerRank[]>([]);
-  const [rankingSource, setRankingSource] = useState<{type: 'CACHE' | 'LIVE', time?: string} | null>(null);
+  // Fix: Added 'API' to the allowed types to match service return type
+  const [rankingSource, setRankingSource] = useState<{type: 'CACHE' | 'LIVE' | 'API', time?: string} | null>(null);
 
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [matchHistory, setMatchHistory] = useState<MatchScoreResult[]>([]);
@@ -125,13 +126,7 @@ export const App: React.FC = () => {
         }
     });
 
-    // Calculate Rate: wins / (wins + losses + draws) or total matches?
-    // User requested "Won X, Lost X, Rate X%". Typically rate is wins / total matches played.
-    // We use the total array length as denominator to represent "Participation", 
-    // or (wins + losses) for "Decision". Let's use total valid parsed games for accuracy, 
-    // or matchHistory.length if we want to be rough.
-    // Let's use (wins + losses) for pure Win/Loss ratio, but (wins / validGames) is better for "Win Rate".
-    
+    // Calculate Rate
     const denominator = validGames > 0 ? validGames : 1;
     const rate = Math.round((wins / denominator) * 100);
 
@@ -143,38 +138,30 @@ export const App: React.FC = () => {
   // --- Helpers ---
   const addLog = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
     // 🔍 LOG LEVEL CONTROL
-    // If LOG_LEVEL is 'production', we simplify or suppress messages
     const logLevel = (process.env.LOG_LEVEL as string) || 'development';
     
     let finalMessage: string | null = message;
 
     if (logLevel === 'production') {
-      // Rule 1: Simplify Download Start -> "同步服务端数据" (No ellipsis)
       if (message.includes('准备下载服务端数据文件')) {
         finalMessage = '同步服务端数据'; 
       }
-      // Rule 2: Suppress Download Progress (use Progress Bar only)
       else if (message.includes('下载中:')) {
         finalMessage = null; 
       }
       else if (message.includes('数据解析成功')) {
-        finalMessage = null; // Too technical
+        finalMessage = null;
       }
-      // Rule 3: Simplify AI Init -> "正在初始化 AI 请求." (Ends with dot)
       else if (message.includes('正在初始化 Gemini AI 请求')) {
         finalMessage = '正在初始化 AI 请求.';
       }
-      // Rule 4: Simplify API Key -> "Key 状态: 已加载"
       else if (message.includes('API Key 状态')) {
         finalMessage = 'Key 状态: 已加载';
       }
-      // Rule 5: Simplify Model Name -> "调用 ai 模型（proxy）"
       else if (message.includes('调用模型')) {
         finalMessage = '调用 ai 模型（proxy）';
       }
-      // Rule 6: Simplify Network Search Progress -> "正在检索进度: 1%"
       else if (message.includes('[网络搜索] 正在检索')) {
-        // Extract numbers " (1/100)"
         const match = message.match(/\((\d+)\/(\d+)\)/);
         if (match) {
           const current = parseInt(match[1]);
@@ -185,7 +172,6 @@ export const App: React.FC = () => {
           finalMessage = '正在检索数据...';
         }
       }
-      // Rule 7: Clean up technical logs
       else if (message.includes('数据负载') || message.includes('请求已发送') || message.includes('耗时') || message.includes('解析 JSON')) {
          finalMessage = null;
       }
@@ -201,12 +187,10 @@ export const App: React.FC = () => {
 
   const fetchCredentials = async (isManual = false) => {
     try {
-      // Add timestamp to prevent caching 404s or old data
       const res = await fetch(`/auth_config.json?t=${Date.now()}`, { cache: 'no-store' });
       if (res.ok) {
         const autoData = await res.json();
         
-        // Handle "Initializing" state from backend script
         if (autoData.status === 'initializing') {
             if (isManual) addLog("⏳ 后台脚本正在启动初始化，请稍候再试...", "info");
             return;
@@ -217,7 +201,7 @@ export const App: React.FC = () => {
               ...prev,
               token: autoData.token,
               sn: autoData.sn || prev.sn,
-              snTime: Date.now() // Frontend always uses current time
+              snTime: Date.now()
             }));
             setUserCredentials(prev => ({
               ...prev,
@@ -225,7 +209,7 @@ export const App: React.FC = () => {
               username: autoData.username || prev.username || 'Auto-User'
             }));
             
-            setHasAuthError(false); // Clear error if successful fetch
+            setHasAuthError(false);
             
             if (isManual) {
                addLog("🔄 已重新加载最新凭证。", "success");
@@ -241,26 +225,23 @@ export const App: React.FC = () => {
     }
   };
 
-  // 1. Load Settings on Mount (LocalStorage + Auto File)
+  // 1. Load Settings on Mount
   useEffect(() => {
     const loadSettings = async () => {
       let loadedConfig = INITIAL_CONFIG;
       let loadedSearch = INITIAL_SEARCH_CONFIG;
       let loadedCreds = INITIAL_CREDENTIALS;
 
-      // A. Try LocalStorage first
       try {
         const savedConfig = localStorage.getItem(STORAGE_KEY_CONFIG);
         if (savedConfig) loadedConfig = { ...loadedConfig, ...JSON.parse(savedConfig) };
 
         const savedSearch = localStorage.getItem(STORAGE_KEY_SEARCH);
-        // Deep merge logic to handle new fields if migrating from old version
         if (savedSearch) {
              const parsed = JSON.parse(savedSearch);
              loadedSearch = { 
                  ...loadedSearch, 
                  ...parsed,
-                 // Ensure new fields exist if loading old data
                  uKeywords: parsed.uKeywords !== undefined ? parsed.uKeywords : 'U8',
                  levelKeywords: parsed.levelKeywords !== undefined ? parsed.levelKeywords : ''
              };
@@ -274,7 +255,6 @@ export const App: React.FC = () => {
       setSearchConfig(loadedSearch);
       setUserCredentials(loadedCreds);
       
-      // B. Fetch Latest Creds
       await fetchCredentials();
     };
 
@@ -296,7 +276,6 @@ export const App: React.FC = () => {
 
 
   // --- Cache Helpers ---
-
   const getCacheKey = (type: 'rankings' | 'matches', identifier: string) => {
     return `${STORAGE_PREFIX_CACHE}${type}_${identifier}`;
   };
@@ -320,10 +299,8 @@ export const App: React.FC = () => {
 
   const saveToCache = <T extends any[]>(key: string, data: T) => {
     try {
-      // FIX: Do not cache empty arrays. This prevents "No Results" errors from being persistent.
-      // If a search fails to find data, we should allow retries without manual cache clearing.
       if (data.length === 0) {
-        localStorage.removeItem(key); // Ensure no stale empty cache exists
+        localStorage.removeItem(key); 
         return; 
       }
 
@@ -359,7 +336,6 @@ export const App: React.FC = () => {
     addLog(`❌ 出错了: ${msg}`, "error");
     setStatus(StepStatus.ERROR);
     
-    // Check for Auth related keywords
     if (msg.includes('401') || msg.includes('Token') || msg.includes('登录') || msg.includes('鉴权')) {
         setHasAuthError(true);
         addLog("💡 提示: 可能是 Token 过期了，请点击左侧更新按钮。", "info");
@@ -378,8 +354,6 @@ export const App: React.FC = () => {
       return;
     }
 
-    // CHECK BROWSER LOCAL STORAGE CACHE FIRST
-    // FIX: Added targetPlayerName to cache key to ensure filtering by name updates results
     const cacheKey = getCacheKey('rankings', `${searchConfig.province}_${searchConfig.city}_${searchConfig.uKeywords}_${searchConfig.levelKeywords}_${searchConfig.gameKeywords}_${searchConfig.itemKeywords}_${searchConfig.targetPlayerName}`);
     const localCachedData = loadFromCache<PlayerRank[]>(cacheKey);
 
@@ -393,8 +367,6 @@ export const App: React.FC = () => {
     setLastCacheTime('');
     setHasAuthError(false);
 
-    // FIX: Only use cache if it actually contains data.
-    // If cache is empty ([]), we force a fresh fetch to ensure it wasn't a false negative.
     if (localCachedData && localCachedData.length > 0) {
       addLog("⚡ 发现有效的本地浏览器缓存，正在加载...", "success");
       setTimeout(() => {
@@ -406,7 +378,6 @@ export const App: React.FC = () => {
       return;
     } else if (localCachedData && localCachedData.length === 0) {
         addLog("🧹 本地缓存结果为空，正在重新向服务器确认...", "info");
-        // Remove the empty cache so next time we are clean
         localStorage.removeItem(cacheKey); 
     }
 
@@ -418,7 +389,6 @@ export const App: React.FC = () => {
         searchConfig,
         (msg, prog) => {
            setProgress(prog);
-           // Restore detailed logs so user sees what's happening
            if (prog === 5 || prog === 15 || prog === 100 || msg.includes('网络搜索') || msg.includes('解析') || (msg.includes('下载') && prog % 5 === 0)) {
               addLog(msg, "info"); 
            }
@@ -431,7 +401,6 @@ export const App: React.FC = () => {
           time: result.updatedAt 
       });
 
-      // Save to cache (internally handles checking for empty array)
       saveToCache(cacheKey, result.data);
 
       if (result.data.length > 0) {
@@ -462,8 +431,6 @@ export const App: React.FC = () => {
 
     const safePlayerName = targetName as string;
 
-    // CHECK CACHE
-    // FIX: Include Gender in Cache Key to avoid stale data when switching filters
     const genderKey = searchConfig.playerGender || 'ALL';
     const cacheKey = getCacheKey('matches', `${safePlayerName}_${searchConfig.province}_${genderKey}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
@@ -498,7 +465,6 @@ export const App: React.FC = () => {
         searchConfig,
         (msg, prog) => {
             setProgress(prog);
-            // Allow logs for download/search phases
             if (prog === 5 || prog === 100 || msg.includes('网络搜索') || msg.includes('解析') || (msg.includes('下载') && prog % 5 === 0)) {
                 addLog(msg, "info");
             }
@@ -529,7 +495,6 @@ export const App: React.FC = () => {
     setLastCacheTime('');
     setHasAuthError(false);
     
-    // FIX: Include Gender in Cache Key here too for consistency
     const genderKey = searchConfig.playerGender || 'ALL';
     const cacheKey = getCacheKey('matches', `${playerName}_${searchConfig.province}_${genderKey}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
@@ -551,7 +516,6 @@ export const App: React.FC = () => {
         searchConfig,
         (msg, prog) => {
              setProgress(prog);
-             // Allow logs for download/search phases
              if (prog === 5 || prog === 100 || msg.includes('网络搜索') || msg.includes('解析') || (msg.includes('下载') && prog % 5 === 0)) {
                 addLog(msg, "info");
              }
@@ -590,7 +554,6 @@ export const App: React.FC = () => {
     setIsAnalyzing(true);
     setPlayerAnalysis("AI 正在思考中... 🧠");
     
-    // UPDATED: Pass log callback to see AI process in UI
     const result = await analyzeData(matchHistory, `
       分析选手 "${selectedPlayer}" 的比赛数据。
       请用 Markdown 格式输出，包含以下部分（使用 ### 作为标题）：
@@ -619,7 +582,6 @@ export const App: React.FC = () => {
     setIsAnalyzing(true);
     setDashboardAnalysis("AI 正在观察榜单... 🧐");
     
-    // UPDATED: Pass log callback
     const result = await analyzeData(rankings, `
       分析以下青少年羽毛球比赛的排名数据。
       请用 Markdown 格式输出，包含以下部分（使用 ### 作为标题）：
@@ -782,10 +744,17 @@ export const App: React.FC = () => {
                           <div className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 border ${
                               rankingSource.type === 'CACHE' 
                                 ? 'bg-green-50 text-green-600 border-green-200' 
-                                : 'bg-blue-50 text-blue-600 border-blue-200'
+                                : rankingSource.type === 'API'
+                                    ? 'bg-purple-50 text-purple-600 border-purple-200'
+                                    : 'bg-blue-50 text-blue-600 border-blue-200'
                           }`}>
-                            {rankingSource.type === 'CACHE' ? <Database className="w-3 h-3"/> : <Zap className="w-3 h-3"/>}
-                            {rankingSource.type === 'CACHE' ? `已缓存 (${rankingSource.time})` : '实时数据'}
+                            {rankingSource.type === 'CACHE' ? <Database className="w-3 h-3"/> : rankingSource.type === 'API' ? <Cloud className="w-3 h-3"/> : <Zap className="w-3 h-3"/>}
+                            {rankingSource.type === 'CACHE' 
+                                ? `已缓存 (${rankingSource.time})` 
+                                : rankingSource.type === 'API'
+                                    ? '云端数据'
+                                    : '实时抓取'
+                            }
                           </div>
                         ) : (
                           <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Leaderboard</p>
