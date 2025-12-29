@@ -57,6 +57,7 @@ export interface MatchScoreResult {
   raceId: string;
   game_name: string;
   groupName: string;
+  fullName?: string; // Added to support more detailed group info
   itemType?: string;
   matchId?: string;
   playerA: string;

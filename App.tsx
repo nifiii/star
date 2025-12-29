@@ -32,7 +32,7 @@ const INITIAL_SEARCH_CONFIG: SearchConfig = {
   uKeywords: 'U8', // Default U-series
   levelKeywords: '', // Default Level
   itemKeywords: '男单',
-  targetPlayerName: ''
+  targetPlayerName: '丹神'
 };
 
 // --- Custom Icons for Background ---
@@ -72,7 +72,7 @@ export const App: React.FC = () => {
   const [userCredentials, setUserCredentials] = useState<UserCredentials>(INITIAL_CREDENTIALS);
   const [searchConfig, setSearchConfig] = useState<SearchConfig>(INITIAL_SEARCH_CONFIG);
   
-  const [view, setView] = useState<AppView>('DASHBOARD_RANKS');
+  const [view, setView] = useState<AppView>('PLAYER_HISTORY');
   const [status, setStatus] = useState<StepStatus>(StepStatus.IDLE);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [progress, setProgress] = useState(0);
@@ -83,7 +83,7 @@ export const App: React.FC = () => {
   // Fix: Added 'API' to the allowed types to match service return type
   const [rankingSource, setRankingSource] = useState<{type: 'CACHE' | 'LIVE' | 'API', time?: string} | null>(null);
 
-  const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
+  const [selectedPlayer, setSelectedPlayer] = useState<string | null>('丹神');
   const [matchHistory, setMatchHistory] = useState<MatchScoreResult[]>([]);
   const [lastCacheTime, setLastCacheTime] = useState<string>('');
 
@@ -700,36 +700,7 @@ export const App: React.FC = () => {
             {/* VIEW 1: RANKINGS DASHBOARD */}
             {view === 'DASHBOARD_RANKS' && (
               <div className="space-y-6">
-                {/* Dashboard Analysis Section */}
-                {dashboardAnalysis && (
-                  <div className="bg-white/95 backdrop-blur border-2 border-kid-purple/30 rounded-[2rem] p-6 relative animate-fade-in shadow-xl overflow-hidden">
-                    <div className="absolute top-0 right-0 w-64 h-64 bg-kid-purple/5 rounded-full -mr-20 -mt-20 blur-3xl"></div>
-                    
-                    <button 
-                      onClick={() => setDashboardAnalysis("")}
-                      className="absolute top-4 right-4 text-slate-400 hover:text-kid-purple bg-slate-50 p-1.5 rounded-full transition-colors z-10"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-
-                    <div className="flex items-center gap-3 mb-6 relative z-10">
-                      <div className="bg-gradient-to-br from-kid-purple to-purple-600 p-2.5 rounded-xl text-white shadow-lg shadow-purple-200">
-                        <Sparkles className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-black text-slate-800">AI 赛区观察</h3>
-                        <p className="text-xs text-slate-500 font-bold">基于当前榜单的智能分析</p>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-50/80 rounded-2xl p-6 border border-slate-100 relative z-10">
-                      <ReactMarkdown components={MarkdownComponents}>
-                        {dashboardAnalysis}
-                      </ReactMarkdown>
-                    </div>
-                  </div>
-                )}
-
+                
                 <div className="bg-white/95 backdrop-blur rounded-[2rem] shadow-xl border border-slate-100 overflow-hidden flex flex-col h-[700px]">
                   <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-white to-slate-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
@@ -762,14 +733,6 @@ export const App: React.FC = () => {
                       </div>
                     </div>
                     <div className="flex gap-2 w-full md:w-auto">
-                      <button
-                        onClick={handleDashboardAnalysis}
-                        disabled={rankings.length === 0 || isAnalyzing}
-                        className="flex-1 md:flex-none text-sm font-bold bg-kid-purple/10 text-kid-purple hover:bg-kid-purple hover:text-white px-4 py-2 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 transition-all active:scale-95"
-                      >
-                        <Sparkles className="w-4 h-4" /> 
-                        {isAnalyzing && !dashboardAnalysis ? "思考中..." : "AI 分析"}
-                      </button>
                       <button 
                         onClick={() => exportExcel(rankings, 'Rankings.xlsx')}
                         disabled={rankings.length === 0}
@@ -788,7 +751,7 @@ export const App: React.FC = () => {
                           <th className="px-4 py-2 font-bold text-xs uppercase bg-white/95">小选手</th>
                           <th className="px-4 py-2 font-bold text-xs uppercase bg-white/95 hidden md:table-cell">俱乐部</th>
                           <th className="px-4 py-2 font-bold text-xs uppercase bg-white/95">积分</th>
-                          <th className="px-4 py-2 font-bold text-xs uppercase bg-white/95 hidden md:table-cell">来源赛事</th>
+                          <th className="px-4 py-2 font-bold text-xs uppercase bg-white/95 hidden md:table-cell">赛事</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -839,14 +802,13 @@ export const App: React.FC = () => {
                               </td>
                               <td className="px-4 py-4 rounded-r-xl">
                                 <div className="flex flex-col items-start">
-                                    <div className="text-xs font-bold text-slate-600 bg-white inline-block px-2 py-1 rounded border border-slate-200 mb-1">
+                                    <div className="text-xs font-bold text-kid-primary truncate max-w-[150px]">
+                                      {row.game_name}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">
                                       {row.groupName}
                                     </div>
-                                    {/* Mobile: Source Game below Group */}
-                                    <div className="text-xs text-slate-400 truncate max-w-[100px] md:hidden">{row.game_name}</div>
                                 </div>
-                                {/* Desktop: Source Game on separate line/block properly handled by hidden md:table-cell logic above if needed, but here we keep structure simple */}
-                                <div className="text-xs text-slate-400 truncate max-w-[150px] hidden md:block">{row.game_name}</div>
                               </td>
                             </tr>
                           ))
@@ -855,6 +817,45 @@ export const App: React.FC = () => {
                     </table>
                   </div>
                 </div>
+
+                {/* AI Analysis for Rankings (New Location & Style) */}
+                <div className="bg-white/95 backdrop-blur rounded-[2rem] shadow-xl border-2 border-kid-purple/20 p-6 relative overflow-hidden animate-fade-in">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-kid-purple/5 rounded-full -mr-20 -mt-20 blur-3xl pointer-events-none"></div>
+                  
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 relative z-10">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-gradient-to-br from-kid-purple to-purple-600 p-2.5 rounded-xl text-white shadow-lg shadow-purple-200">
+                        <Sparkles className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-slate-800">AI 赛区观察</h3>
+                        <p className="text-xs text-slate-500 font-bold">基于当前榜单的智能分析</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleDashboardAnalysis}
+                      disabled={rankings.length === 0 || isAnalyzing}
+                      className="bg-kid-purple hover:bg-purple-600 text-white px-5 py-2 rounded-xl font-bold shadow-lg shadow-purple-200 hover:shadow-purple-300 transition-all flex items-center gap-2 active:scale-95 disabled:opacity-50 disabled:shadow-none"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      {isAnalyzing && !dashboardAnalysis ? "思考中..." : "生成赛区报告"}
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-50/80 rounded-2xl p-6 border border-slate-100 min-h-[150px] relative z-10">
+                    {dashboardAnalysis ? (
+                      <ReactMarkdown components={MarkdownComponents}>
+                        {dashboardAnalysis}
+                      </ReactMarkdown>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full text-slate-400 py-8">
+                        <Lightbulb className="w-10 h-10 mb-3 opacity-50" />
+                        <p className="text-sm font-medium">点击右上角按钮，让 AI 深度分析当前赛事的竞争格局</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
               </div>
             )}
 
@@ -990,7 +991,7 @@ export const App: React.FC = () => {
                               </td>
                               <td className="px-4 py-3 rounded-r-xl hidden md:table-cell">
                                 <div className="text-xs font-bold text-kid-primary truncate max-w-[150px]">{m.game_name}</div>
-                                <div className="text-[10px] text-slate-400 mt-0.5">{m.groupName}</div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">{m.fullName || m.groupName}</div>
                               </td>
                             </tr>
                           );
