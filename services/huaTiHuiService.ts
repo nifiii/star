@@ -88,7 +88,9 @@ export const fetchAggregatedRankings = async (
           itemKeywords: searchConfig.itemKeywords,
           gameKeywords: searchConfig.gameKeywords,
           targetPlayerName: searchConfig.targetPlayerName,
-          playerGender: searchConfig.playerGender
+          playerGender: searchConfig.playerGender,
+          province: searchConfig.province, // [Added]
+          city: searchConfig.city          // [Added]
       };
 
       const data = await queryApi<PlayerRank>('/api/rankings', params, onProgress);
@@ -119,7 +121,9 @@ export const fetchPlayerMatches = async (
       const params = {
           playerName: targetName,
           playerGender: searchConfig.playerGender,
-          gameKeywords: searchConfig.gameKeywords
+          gameKeywords: searchConfig.gameKeywords,
+          province: searchConfig.province, // [Added]
+          city: searchConfig.city          // [Added]
       };
 
       const data = await queryApi<MatchScoreResult>('/api/matches', params, onProgress);

@@ -432,7 +432,8 @@ export const App: React.FC = () => {
     const safePlayerName = targetName as string;
 
     const genderKey = searchConfig.playerGender || 'ALL';
-    const cacheKey = getCacheKey('matches', `${safePlayerName}_${searchConfig.province}_${genderKey}`);
+    // [Updated Cache Key] Include City to prevent wrong location cache hits
+    const cacheKey = getCacheKey('matches', `${safePlayerName}_${searchConfig.province}_${searchConfig.city}_${genderKey}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
 
     setStatus(StepStatus.LOADING);
@@ -496,7 +497,8 @@ export const App: React.FC = () => {
     setHasAuthError(false);
     
     const genderKey = searchConfig.playerGender || 'ALL';
-    const cacheKey = getCacheKey('matches', `${playerName}_${searchConfig.province}_${genderKey}`);
+    // [Updated Cache Key] Include City
+    const cacheKey = getCacheKey('matches', `${playerName}_${searchConfig.province}_${searchConfig.city}_${genderKey}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
 
     if (cachedData && cachedData.length > 0) {
