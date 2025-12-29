@@ -1,3 +1,7 @@
+# 定义自定义日志格式，专门记录 API 请求详情
+# 格式: [时间] 客户IP "请求方法 路径" 状态码 - 查询参数
+log_format api_tracking '[$time_local] $remote_addr "$request_method $uri" $status - Query: "$args" - UA: "$http_user_agent"';
+
 server {
     listen 80;
     # 匹配 localhost 和 任意 IP 访问
@@ -6,7 +10,12 @@ server {
     root /var/www/html;
     index index.html;
 
+    # Gzip Optimization
     gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 256;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
 
     # 1. 核心 SPA 配置
@@ -14,65 +23,52 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # 2. 鉴权配置 (Auth Config)
-    # 包含 Token 和状态信息，严禁缓存，确保前端能获取最新 Token
+    # 2. 鉴权配置
     location = /auth_config.json {
-        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
+        add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0";
         expires off;
     }
 
-    # 3. 每日榜单数据 (Rankings)
-    # 静态 JSON 文件，允许短时间缓存 (1小时)
-    location = /daily_rankings.json {
+    # [Deprecated but kept for fallback] 静态 JSON 文件
+    location ~ ^/daily_.*\.json$ {
         add_header Cache-Control "public, max-age=3600";
         expires 1h;
     }
 
-    # 4. 每日比分数据 (Matches)
-    # 静态 JSON 文件，允许短时间缓存 (1小时)
-    location = /daily_matches.json {
-        add_header Cache-Control "public, max-age=3600";
-        expires 1h;
+    # 3. [NEW] API Proxy for Node.js Server
+    # 将前端 /api/ 请求转发到后台 Express 服务
+    location /api/ {
+        # 启用 API 访问日志记录
+        access_log /var/log/nginx/api_access.log api_tracking;
+
+        proxy_pass http://127.0.0.1:3000/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
     }
 
-    # 5. 静态资源 (JS/CSS/Images)
+    # 4. 静态资源
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
         expires 1y;
         add_header Cache-Control "public, no-transform";
     }
 
-    # 6. Google Gemini AI Proxy
-    # 代理前端 AI 请求，解决国内网络无法访问 Google API 的问题
-    # 使用 ^~ 提高优先级，确保不被其他正则规则抢占
+    # 5. Google Gemini AI Proxy
     location ^~ /google-ai/ {
-        # 同时使用 Docker DNS (127.0.0.11) 和 Google DNS (8.8.8.8) 防止解析失败
         resolver 127.0.0.11 8.8.8.8 ipv6=off valid=30s;
-        
-        # [核心修正] 使用显式 rewrite 确保路径剥离准确无误
-        # 解释：将请求 /google-ai/v1beta/xxx 重写为 /v1beta/xxx
-        # break 标志位表示重写后直接使用当前 location 的 proxy_pass，不再重新匹配
         rewrite ^/google-ai/(.*) /$1 break;
-        
-        # 这里的 proxy_pass 不带 URI (不带尾部斜杠)，直接使用 rewrite 处理后的路径
         proxy_pass https://generativelanguage.googleapis.com;
-        
-        # SSL/SNI 配置 (必须配置，否则 Google 会拒绝握手)
         proxy_ssl_server_name on;
         proxy_ssl_name generativelanguage.googleapis.com;
         proxy_set_header Host generativelanguage.googleapis.com;
-        
-        # 连接优化
         proxy_http_version 1.1;
         proxy_set_header Connection "";
-        
-        # 禁用缓存 (AI 响应是实时的)
         proxy_buffering off;
         proxy_cache off;
         chunked_transfer_encoding on;
-        
-        # 超时设置 (AI 分析可能较慢)
         proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
     }
 
     error_page 500 502 503 504 /50x.html;

@@ -12,6 +12,12 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
+# [新增] 将 Nginx 日志重定向到 Docker 标准输出/错误流
+# 这样可以使用 `docker logs` 直接查看访问记录
+RUN ln -sf /dev/stdout /var/log/nginx/access.log \
+    && ln -sf /dev/stderr /var/log/nginx/error.log \
+    && ln -sf /dev/stdout /var/log/nginx/api_access.log
+
 # 设置默认时区 (可通过 docker run -e TZ=... 覆盖)
 ENV TZ=Asia/Shanghai
 # 标记 Docker 环境，供后台脚本识别路径 (/app/data vs ../data)

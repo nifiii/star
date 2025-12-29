@@ -11,7 +11,9 @@
 ### 🚀 极速体验 (Performance)
 *   **双重增量引擎**: 采用 **Server-Side Incremental Scraper** 技术。后台脚本智能分离“赛事排名”与“比赛比分”的抓取逻辑，确保数据完整性。
 *   **智能冷启动**: 容器启动时会自动检查数据新鲜度。如果数据在 **4小时内** 已更新，将跳过耗时的全量爬取，仅刷新 Token，实现秒级重启。
-*   **静态化持久存储**: 自动生成 `daily_rankings.json` (榜单) 和 `daily_matches.json` (比分库)。前端优先读取这些静态资源，配合 Nginx 缓存，大幅降低 API 依赖。
+*   **混合架构 (v2.0)**: 引入 **Express API Server**。
+    *   **内存加速**: 启动时将 JSON 数据加载至内存，提供毫秒级查询响应。
+    *   **流量节省**: 前端不再下载巨大的 JSON 文件，而是按需调用 API (`/api/rankings`, `/api/matches`)，大幅减少流量消耗。
 
 ### 🔎 精准筛选 (Smart Filter)
 *   **全年龄段覆盖**: 支持 **U7 - U16** 全系列年龄组。
@@ -25,6 +27,7 @@
 ### 🛡️ 网络优化 (AI Proxy)
 *   **Nginx 反向代理**: 内置 `/google-ai/` 转发规则，将前端的 AI 请求通过服务器中转至 Google。
 *   **无障碍访问**: 即使客户端无法直接连接 Google API (如国内网络环境)，也能正常使用 AI 战术分析功能。
+*   **用户行为审计**: Nginx 自动记录 API 调用日志，方便管理员分析热门搜索关键词。
 
 ### 🧠 功能特性
 *   **🏆 积分排行榜**: 聚合计算指定城市、年龄段的所有近期赛事积分。
@@ -36,55 +39,40 @@
 
 ## 💾 数据存储与查询机制 (Data Architecture)
 
-本项目采用 **"静态离线库 + 实时 API 兜底"** 的混合架构，实现了高性能与数据完整性的平衡。
+本项目采用 **"静态爬虫 + 内存 API"** 的混合架构，实现了高性能与数据完整性的平衡。
 
 ### 1. 数据持久化 (Storage)
 核心数据存储为两个独立的 JSON 文件，由后台脚本自动维护并生成到静态资源目录：
 
 *   **`daily_rankings.json` (榜单库)**:
     *   **内容**: 包含每一场赛事的详细排名信息（第1名到第N名）。
-    *   **结构**: `[{ raceId, game_name, playerName, rank, score, club, itemType, name... }]`
-    *   **更新 (v1.0.3)**: 增强了字段采集，自动将 `itemName`/`itemType` 合并入索引，同时保留原始字段供前端调用，大幅提升“男单/女单”等项目筛选的命中率。
 *   **`daily_matches.json` (比分库)**:
     *   **内容**: 包含每一场单项对决的比分详情。
-    *   **结构**: `[{ raceId, matchId, playerA, playerB, score: "21:15", round... }]`
-    *   **用途**: 用于“选手生涯档案”查询，支持秒级检索历史战绩。
 
 ### 2. 增量更新逻辑 (Incremental Updates)
 后台脚本 (`scripts/getToken.js`) 运行在 Docker 容器中，执行逻辑如下：
 
 1.  **调度**: 每天凌晨 5:00 (北京时间) 自动唤醒。
-2.  **获取目录**: 拉取广州市最近一年已结束的赛事列表。
-3.  **双重比对**:
-    *   检查 `daily_rankings.json` 是否包含该赛事 ID。
-    *   检查 `daily_matches.json` 是否包含该赛事 ID。
-4.  **按需抓取 (Delta Fetch)**:
-    *   如果某场比赛只有排名但没有比分（例如旧逻辑遗留的数据），脚本会**只抓取缺失的比分数据**并追加到文件。
-    *   只有当本地完全缺失该 ID 时，才发起网络请求。
-5.  **原子写入**: 更新完成后，将完整数据写回磁盘 (`/app/data`)，Nginx 通过软链接读取。
+2.  **双重比对**: 仅抓取本地缺失的赛事 ID。
+3.  **内存刷新**: 数据写入磁盘后，Express Server 自动重载内存数据，确保 API 返回最新结果。
 
-### 3. 前端查询策略 (Query Logic)
-前端 (`huaTiHuiService.ts`) 采用 **Cache-First** 策略：
+### 3. API 查询 (v2.0)
+前端 (`huaTiHuiService.ts`) 通过 HTTP 接口查询数据：
 
-1.  **查榜单**: 
-    *   前端请求 `/daily_rankings.json`。
-    *   下载成功后，利用浏览器内存根据用户选择的 **年龄/组别/项目** 进行实时过滤。
-    *   *优势*: 即使数据量大，本地 JS 处理也比网络请求快得多。
-2.  **查选手**: 
-    *   前端请求 `/daily_matches.json`。
-    *   在数万条记录中遍历搜索 `playerName`。
-    *   *优势*: 实现“秒查”历史战绩，无需等待几十个 API 串行返回。
-3.  **Live Fallback (灾备)**: 
-    *   只有当 JSON 文件下载失败（404/500）或内容为空，或者**本地筛选结果为0**（防止误判）时，系统才会自动切换为“实时爬虫模式”，通过浏览器直接请求华体汇 API。
+1.  **查榜单 (`GET /api/rankings`)**: 
+    *   参数: `uKeywords`, `levelKeywords`, `gameKeywords` 等。
+    *   逻辑: 服务端在内存中遍历过滤，仅返回匹配的几百条数据，而非下载几十MB的文件。
+2.  **查选手 (`GET /api/matches`)**: 
+    *   参数: `playerName`。
+    *   逻辑: 服务端秒级检索该选手所有历史战绩。
 
 ---
 
 ## 🛠️ 技术架构
 
 *   **前端**: React 19, Vite, Tailwind CSS
-*   **后端**: Node.js (无需 Puppeteer，纯 API 调用), `node-cron` 调度逻辑
-*   **数据流**: 定时任务 -> API -> JSON Files (/app/data) -> Symlink -> Nginx -> React Client
-*   **AI**: Google Gemini API (`@google/genai`) + **Nginx Proxy** (解决网络连通性)
+*   **后端**: Node.js (Express + Fetch), `node-cron` 调度逻辑
+*   **反向代理**: Nginx (API Proxy + AI Proxy + Access Logging)
 *   **部署**: Docker (Nginx + Node.js 混合镜像)
 
 ---
@@ -106,7 +94,7 @@ cd huatihui-data-insight
 ```
 
 ### 3. 构建镜像
-构建时需要注入参数，特别是 **域名** 配置，这对于 Nginx 正确处理 AI 转发请求至关重要。
+构建时需要注入参数，特别是 **域名** 配置。
 
 ```bash
 docker build \
@@ -116,15 +104,6 @@ docker build \
   -t hth-dashboard \
   -f Dockerfile.txt .
 ```
-
-*   `API_KEY` (必填): 您的 Google Gemini API Key。
-*   `DOMAIN_NAME` (可选): 您的服务域名或 IP。
-    *   作用：自动替换 `nginx.conf` 中的 `server_name` 配置。
-    *   默认值：`localhost`。
-    *   **注意**：如果不设置正确的域名，Nginx 转发可能会失败。
-*   `LOG_LEVEL` (可选): 前端日志显示的详细程度。
-    *   `production` (默认): **生产模式**。界面简洁，仅显示关键状态（如“开始搜索”、“搜索完成”）和 AI 分析进度，隐藏底层技术细节（如具体的网络请求、数据包解析等）。
-    *   `development`: **开发模式**。在界面下方的“黑底终端”中显示所有详细的调试日志，适合排查问题。
 
 ### 4. 运行容器
 启动时注入华体汇凭证，并**挂载数据卷**以保证重启后数据不丢失。
@@ -145,18 +124,21 @@ docker run -d \
   hth-dashboard
 ```
 
-*   `-v /usr/local/hth-data:/app/data`: **关键配置**。将容器内的数据目录映射到宿主机，确保删除容器后，爬取到的排名和比分数据依然保留。
-*   `-e TZ="Asia/Shanghai"`: 设置时区，确保定时任务在正确的北京时间凌晨 5 点运行。
-
 ### 5. 验证与维护
 
-**查看后台爬虫日志：**
+**🔍 查看 API 调用日志 (New):**
+您可以实时监视用户在搜什么：
+```bash
+docker logs -f my-hth-dashboard | grep "Query:"
+```
+日志示例: `[25/Feb/2025:10:00:00 +0800] 192.168.1.1 "GET /api/matches" 200 - Query: "playerName=林丹&gameKeywords=公开赛" - UA: "Mozilla/..."`
+
+**查看后台爬虫日志:**
 ```bash
 docker logs -f my-hth-dashboard
 ```
 
-**手动触发更新（可选）：**
-如果不想等自动调度，可以进入容器手动运行：
+**手动触发更新（可选）:**
 ```bash
 docker exec -it my-hth-dashboard npm run get-token
 ```
@@ -166,7 +148,7 @@ docker exec -it my-hth-dashboard npm run get-token
 ## 💻 本地开发
 
 1.  **安装依赖**: `npm install`
-2.  **获取 Token**: 运行 `npm run get-token` (这会启动后台脚本，执行增量更新并生成 JSON 文件)。
+2.  **获取 Token**: 运行 `npm run get-token` (这会启动 API Server 和后台脚本)。
 3.  **启动前端**: `npm run dev` (默认 `LOG_LEVEL` 为 `development`)。
 
 ## 📄 License
