@@ -57,11 +57,11 @@ const GROUP_SECTIONS = [
 ];
 
 const ITEM_OPTIONS = [
-  { label: '男单', value: '男单,男子单打,男子 单打,男A,男B' },
-  { label: '女单', value: '女单,女子单打,女子 单打,女A,女B' },
-  { label: '男双', value: '男双,男子双打,男子 双打' },
-  { label: '女双', value: '女双,女子双打,女子 双打' },
-  { label: '混双', value: '混双,混合双打,混合 双打' },
+  { label: '男单', value: '男单,男子单打,男子,单打,男A,男B' },
+  { label: '女单', value: '女单,女子单打,女子,单打,女A,女B' },
+  { label: '男双', value: '男双,男子双打,男子,双打' },
+  { label: '女双', value: '女双,女子双打,女子,双打' },
+  { label: '混双', value: '混双,混合双打,混合,双打' },
   { label: '团体', value: '团体' },
 ];
 
@@ -130,6 +130,24 @@ const ConfigPanel: React.FC<Props> = ({
      return targetParts.length > 0 && targetParts.every(t => currentParts.includes(t));
   };
 
+  // Helper to display friendly labels instead of raw keywords
+  const getItemDisplayLabel = () => {
+    const currentStr = searchConfig.itemKeywords || '';
+    if (!currentStr) return '';
+
+    // Find all options that are currently active in the config string
+    const activeLabels = ITEM_OPTIONS.filter(opt => 
+      isKeywordActive('itemKeywords', opt.value)
+    ).map(opt => opt.label);
+
+    if (activeLabels.length > 0) {
+      return activeLabels.join(' + ');
+    }
+
+    // Fallback: if user manually entered something or partial match, show raw string
+    return currentStr;
+  };
+
   // Toggle Handlers with Mutual Exclusion
   const toggleGroupDropdown = () => {
     if (!isGroupOpen) setIsItemOpen(false); // Close other
@@ -151,6 +169,7 @@ const ConfigPanel: React.FC<Props> = ({
   };
 
   const combinedGroupText = getCombinedGroupText();
+  const itemDisplayLabel = getItemDisplayLabel();
 
   return (
     // Removed overflow-hidden to allow dropdowns to float over siblings
@@ -302,8 +321,8 @@ const ConfigPanel: React.FC<Props> = ({
                  className={`w-full text-left px-4 py-3 bg-white border rounded-xl text-sm font-medium text-slate-700 shadow-sm flex justify-between items-center transition-all ${isItemOpen ? 'border-kid-secondary ring-2 ring-kid-secondary/10' : 'border-slate-200 hover:border-kid-secondary/50'}`}
                >
                  <span className="truncate pr-4">
-                   {searchConfig.itemKeywords 
-                      ? <span className="text-slate-800 font-bold">{searchConfig.itemKeywords}</span> 
+                   {itemDisplayLabel
+                      ? <span className="text-slate-800 font-bold">{itemDisplayLabel}</span> 
                       : <span className="text-slate-400">全部项目 (不限)</span>
                    }
                  </span>
@@ -357,7 +376,7 @@ const ConfigPanel: React.FC<Props> = ({
                   value={searchConfig.targetPlayerName || ''}
                   onChange={(e) => onSearchConfigChange('targetPlayerName', e.target.value)}
                   className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 shadow-sm focus:border-kid-primary focus:outline-none focus:ring-2 focus:ring-kid-primary/10 placeholder:text-slate-300"
-                  placeholder="只看特定选手的排名..."
+                  placeholder="例如：超级丹"
                 />
             </div>
           </div>

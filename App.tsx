@@ -32,7 +32,7 @@ const INITIAL_SEARCH_CONFIG: SearchConfig = {
   uKeywords: 'U8', // Default U-series
   levelKeywords: '', // Default Level
   itemKeywords: '男单',
-  targetPlayerName: '超级丹'
+  targetPlayerName: null
 };
 
 // --- Custom Icons for Background ---
@@ -83,7 +83,7 @@ export const App: React.FC = () => {
   // Fix: Added 'API' to the allowed types to match service return type
   const [rankingSource, setRankingSource] = useState<{type: 'CACHE' | 'LIVE' | 'API', time?: string} | null>(null);
 
-  const [selectedPlayer, setSelectedPlayer] = useState<string | null>('超级丹');
+  const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [matchHistory, setMatchHistory] = useState<MatchScoreResult[]>([]);
   const [lastCacheTime, setLastCacheTime] = useState<string>('');
 
