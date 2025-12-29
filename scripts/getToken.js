@@ -121,7 +121,8 @@ function loadDataToMemory() {
 app.get('/api/rankings', (req, res) => {
     const { 
         uKeywords, levelKeywords, itemKeywords, 
-        gameKeywords, targetPlayerName, playerGender 
+        gameKeywords, targetPlayerName, playerGender,
+        province, city
     } = req.query;
 
     const results = MEMORY_DB.rankings.filter(item => {
@@ -176,6 +177,14 @@ app.get('/api/rankings', (req, res) => {
             if (!pName.includes(target)) return false;
         }
 
+        // 6. Province & City (Strict Check if provided)
+        if (province) {
+            if (!item.province || !normalize(item.province).includes(normalize(province))) return false;
+        }
+        if (city) {
+            if (!item.city || !normalize(item.city).includes(normalize(city))) return false;
+        }
+
         return true;
     });
 
@@ -202,7 +211,7 @@ app.get('/api/rankings', (req, res) => {
 
 // 2. Matches Search API
 app.get('/api/matches', (req, res) => {
-    const { playerName, playerGender, gameKeywords } = req.query;
+    const { playerName, playerGender, gameKeywords, province, city } = req.query;
 
     if (!playerName) {
         return res.status(400).json({ error: "Missing playerName parameter" });
@@ -235,6 +244,14 @@ app.get('/api/matches', (req, res) => {
             if (playerGender === 'F' && !fullText.includes('女')) return false;
         }
 
+        // 4. Province & City
+        if (province) {
+            if (!match.province || !normalize(match.province).includes(normalize(province))) return false;
+        }
+        if (city) {
+            if (!match.city || !normalize(match.city).includes(normalize(city))) return false;
+        }
+
         return true;
     });
 
@@ -247,12 +264,9 @@ app.get('/api/matches', (req, res) => {
 });
 
 // --- Scraper Logic (Preserved) ---
-// (We moved loginAndSave, fetchGameList, etc. below, identical to before but updated to refresh MemoryDB)
 
 async function loginAndSave() {
   console.log(`\n🔑 [${new Date().toLocaleString()}] 正在登录华体汇...`);
-  // ... (Login logic identical to previous version) ...
-  // Shortened for brevity in XML, assumes logic is same but need to include it for full file
   const loginUrl = `https://user.ymq.me/public/public/login?t=${Date.now()}`;
   const requestTime = Date.now();
   const payload = {
@@ -299,7 +313,6 @@ async function fetchGameList() {
 }
 
 async function fetchRankingsForGame(game) {
-    // ... (Identical to previous logic) ...
     const allRanks = [];
     try {
         const fetchConfig = {
@@ -327,7 +340,10 @@ async function fetchRankingsForGame(game) {
                 if (rankData?.detail) {
                     rankData.detail.forEach(r => {
                         allRanks.push({
-                            raceId: game.id, game_name: game.game_name,
+                            raceId: game.id, 
+                            game_name: game.game_name,
+                            province: game.province || '', // Added
+                            city: game.city || '', // Added
                             groupName: `${item.groupName || ''} ${item.itemName || item.itemType || ''}`.trim() || '未知组别', 
                             fullGroupName: item.name || '',
                             playerName: r.playerName, rank: r.rank, score: r.score, club: r.club || r.teamName,
@@ -345,7 +361,6 @@ async function fetchRankingsForGame(game) {
 }
 
 async function fetchMatchesForGame(game) {
-    // ... (Identical to previous logic) ...
     const allMatches = [];
     let page = 1; let pageSize = 50; let hasMore = true;
     try {
@@ -377,7 +392,11 @@ async function fetchMatchesForGame(game) {
                 else if (m.score) finalScore = m.score;
                 
                 allMatches.push({
-                    raceId: game.id, game_name: game.game_name, matchId: m.id,
+                    raceId: game.id, 
+                    game_name: game.game_name, 
+                    matchId: m.id,
+                    province: game.province || '', // Added
+                    city: game.city || '', // Added
                     fullName: m.fullName || m.groupName || '', groupName: m.groupName || m.fullName || '', 
                     playerA: p1 || '未知', playerB: p2 || '未知', score: finalScore,
                     matchTime: m.raceTimeName, round: m.roundName || m.rulesName
