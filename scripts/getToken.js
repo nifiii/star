@@ -79,7 +79,7 @@ function initEnvironment() {
          try { fs.mkdirSync(publicDir, { recursive: true }); } catch(e) {}
     }
 
-    const initData = { updatedAt: 0, dateString: "初始化中", count: 0, city: "初始化中", status: "initializing", data: [] };
+    const initData = { updatedAt: 0, dateString: "初始化中", count: 0, status: "initializing", data: [] };
 
     try {
         if (!fs.existsSync(rankingsPath)) fs.writeFileSync(rankingsPath, JSON.stringify(initData));
@@ -455,8 +455,9 @@ async function runDailyUpdate() {
         const mergedRankings = [...existingRankData, ...newRankings];
         const mergedMatches = [...existingMatchData, ...newMatches];
         console.log(`💾 正在写入磁盘 (${dataDir})...`);
-        fs.writeFileSync(rankingsPath, JSON.stringify({ updatedAt: now, dateString: dateStr, count: mergedRankings.length, city: "广东省", status: "active", data: mergedRankings }));
-        fs.writeFileSync(matchesPath, JSON.stringify({ updatedAt: now, dateString: dateStr, count: mergedMatches.length, city: "广东省", status: "active", data: mergedMatches }));
+        // Removed root 'city' field as requested
+        fs.writeFileSync(rankingsPath, JSON.stringify({ updatedAt: now, dateString: dateStr, count: mergedRankings.length, status: "active", data: mergedRankings }));
+        fs.writeFileSync(matchesPath, JSON.stringify({ updatedAt: now, dateString: dateStr, count: mergedMatches.length, status: "active", data: mergedMatches }));
         console.log(`🎉 更新成功! 新增排名: ${newRankings.length}, 新增比分: ${newMatches.length}`);
     }
     

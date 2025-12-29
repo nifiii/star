@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { ApiHeaderConfig, SearchConfig, StepStatus, UserCredentials } from '../types';
-import { Calendar, Search, ChevronDown, ChevronUp, Trophy, UserSearch, RefreshCw, Trash2, RotateCcw, AlertTriangle, Filter, Tag, XCircle, User } from 'lucide-react';
+import { Calendar, Search, ChevronDown, ChevronUp, Trophy, UserSearch, RefreshCw, Trash2, RotateCcw, AlertTriangle, Filter, Tag, XCircle, User, MapPin } from 'lucide-react';
 // removed generateDefaultKeywords import
 
 interface Props {
@@ -63,6 +63,14 @@ const ITEM_OPTIONS = [
   { label: '女双', value: '女双,女子双打,女子 双打' },
   { label: '混双', value: '混双,混合双打,混合 双打' },
   { label: '团体', value: '团体' },
+];
+
+const GUANGDONG_CITIES = [
+  "广州市", "深圳市", "珠海市", "汕头市", "佛山市", 
+  "韶关市", "湛江市", "肇庆市", "江门市", "茂名市", 
+  "惠州市", "梅州市", "汕尾市", "河源市", "阳江市", 
+  "清远市", "东莞市", "中山市", "潮州市", "揭阳市", 
+  "云浮市"
 ];
 
 const ConfigPanel: React.FC<Props> = ({ 
@@ -367,7 +375,7 @@ const ConfigPanel: React.FC<Props> = ({
           >
             <span className="text-xs font-bold flex items-center gap-2">
                 <span className={`p-1.5 rounded-full ${showAdvanced ? 'bg-kid-primary/10' : 'bg-slate-100 group-hover:bg-kid-primary/10'} transition-colors`}>
-                    <Filter className="w-3.5 h-3.5" />
+                    <MapPin className="w-3.5 h-3.5" />
                 </span>
                 更多筛选 (城市/赛事名)
             </span>
@@ -377,25 +385,29 @@ const ConfigPanel: React.FC<Props> = ({
           {showAdvanced && (
             <div className="mt-2 p-3 bg-slate-50/80 rounded-xl border border-slate-100 space-y-3 animate-fade-in text-sm mx-1">
                 <div className="grid grid-cols-2 gap-3">
+                   {/* Province: Fixed to Guangdong */}
                    <div>
                       <label className="block text-[10px] font-bold text-slate-400 mb-1">省份</label>
                       <input
                         type="text"
-                        value={searchConfig.province}
-                        onChange={(e) => onSearchConfigChange('province', e.target.value)}
-                        className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-kid-primary focus:outline-none"
-                        placeholder="例如：广东"
+                        value="广东省"
+                        readOnly
+                        className="w-full px-2 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-xs text-slate-500 cursor-not-allowed"
                       />
                    </div>
+                   {/* City: Dropdown */}
                    <div>
                       <label className="block text-[10px] font-bold text-slate-400 mb-1">城市</label>
-                      <input
-                        type="text"
+                      <select
                         value={searchConfig.city}
                         onChange={(e) => onSearchConfigChange('city', e.target.value)}
-                        className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-kid-primary focus:outline-none"
-                        placeholder="例如：广州"
-                      />
+                        className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-kid-primary focus:outline-none text-slate-700"
+                      >
+                         <option value="">全部城市 (不限)</option>
+                         {GUANGDONG_CITIES.map(city => (
+                            <option key={city} value={city}>{city}</option>
+                         ))}
+                      </select>
                    </div>
                 </div>
                 <div>
@@ -410,7 +422,6 @@ const ConfigPanel: React.FC<Props> = ({
                       placeholder="例如：少年,小学"
                     />
                 </div>
-                {/* Removed targetPlayerName from here */}
             </div>
           )}
         </div>
