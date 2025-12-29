@@ -32,7 +32,7 @@ const INITIAL_SEARCH_CONFIG: SearchConfig = {
   uKeywords: 'U8', // Default U-series
   levelKeywords: '', // Default Level
   itemKeywords: '男单',
-  targetPlayerName: null
+  targetPlayerName: undefined
 };
 
 // --- Custom Icons for Background ---
