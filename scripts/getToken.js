@@ -179,11 +179,24 @@ app.get('/api/rankings', (req, res) => {
         return true;
     });
 
+    // [New Logic] Limit results if specific filters are missing to prevent browser overload
+    let finalData = results;
+    
+    // Check if "Group" (U or Level), "Item", and "Player" filters are essentially empty
+    const isUEmpty = !uKeywords || String(uKeywords).trim() === '';
+    const isLevelEmpty = !levelKeywords || String(levelKeywords).trim() === '';
+    const isItemEmpty = !itemKeywords || String(itemKeywords).trim() === '';
+    const isPlayerEmpty = !targetPlayerName || String(targetPlayerName).trim() === '';
+
+    if (isUEmpty && isLevelEmpty && isItemEmpty && isPlayerEmpty) {
+        finalData = results.slice(0, 500);
+    }
+
     res.json({
         source: 'API_MEMORY',
-        count: results.length,
+        count: finalData.length,
         updatedAt: new Date(MEMORY_DB.lastUpdate).toLocaleString(),
-        data: results
+        data: finalData
     });
 });
 
