@@ -125,7 +125,18 @@ app.get('/api/rankings', (req, res) => {
         province, city
     } = req.query;
 
+    console.log(`🔍 [API/Rankings] Req Params:`, { gameKeywords, city, province });
+
     const results = MEMORY_DB.rankings.filter(item => {
+        // 1. Province & City (Strict Check FIRST for performance)
+        // If province/city param is provided, item MUST match.
+        if (province && province.trim()) {
+            if (!item.province || !normalize(item.province).includes(normalize(province))) return false;
+        }
+        if (city && city.trim()) {
+            if (!item.city || !normalize(item.city).includes(normalize(city))) return false;
+        }
+
         const fullText = normalize(
             (item.fullGroupName || '') + ' ' + 
             (item.groupName || '') + ' ' + 
@@ -133,13 +144,13 @@ app.get('/api/rankings', (req, res) => {
             (item.name || item.itemName || '')
         );
 
-        // 1. Gender
+        // 2. Gender
         if (playerGender) {
             if (playerGender === 'M' && !fullText.includes('男')) return false;
             if (playerGender === 'F' && !fullText.includes('女')) return false;
         }
 
-        // 2. Group Logic (U-series OR Level)
+        // 3. Group Logic (U-series OR Level)
         const uKeys = normalize(uKeywords).split(/[,，]/).filter(k => k);
         const levelKeys = normalize(levelKeywords).split(/[,，]/).filter(k => k);
         
@@ -157,41 +168,31 @@ app.get('/api/rankings', (req, res) => {
             if (!levelMatch) return false;
         }
 
-        // 3. Item Type
+        // 4. Item Type
         const itemKeys = normalize(itemKeywords).split(/[,，]/).filter(k => k);
         if (itemKeys.length > 0) {
             if (!itemKeys.some(k => fullText.includes(k))) return false;
         }
 
-        // 4. Game Name
+        // 5. Game Name (Explicitly checking item.game_name)
         const gameKeys = normalize(gameKeywords).split(/[,，]/).filter(k => k);
         if (gameKeys.length > 0) {
-            const gameName = normalize(item.game_name);
+            const gameName = normalize(item.game_name || '');
             if (!gameKeys.some(k => gameName.includes(k))) return false;
         }
 
-        // 5. Player Name
+        // 6. Player Name
         if (targetPlayerName) {
             const target = normalize(targetPlayerName);
-            const pName = normalize(item.playerName);
+            const pName = normalize(item.playerName || '');
             if (!pName.includes(target)) return false;
-        }
-
-        // 6. Province & City (Strict Check if provided)
-        if (province) {
-            if (!item.province || !normalize(item.province).includes(normalize(province))) return false;
-        }
-        if (city) {
-            if (!item.city || !normalize(item.city).includes(normalize(city))) return false;
         }
 
         return true;
     });
 
-    // [New Logic] Limit results if specific filters are missing to prevent browser overload
+    // Limit results
     let finalData = results;
-    
-    // Check if "Group" (U or Level), "Item", and "Player" filters are essentially empty
     const isUEmpty = !uKeywords || String(uKeywords).trim() === '';
     const isLevelEmpty = !levelKeywords || String(levelKeywords).trim() === '';
     const isItemEmpty = !itemKeywords || String(itemKeywords).trim() === '';
@@ -217,23 +218,33 @@ app.get('/api/matches', (req, res) => {
         return res.status(400).json({ error: "Missing playerName parameter" });
     }
 
+    console.log(`🔍 [API/Matches] Req Params:`, { playerName, gameKeywords, city, province });
+
     const targetName = normalize(playerName);
 
     const results = MEMORY_DB.matches.filter(match => {
-        // 1. Player Name Check (Strict)
-        const pA = normalize(match.playerA || match.mateOne || match.user1Name);
-        const pB = normalize(match.playerB || match.mateTwo || match.user2Name);
+        // 1. Province & City Check (Priority)
+        if (province && province.trim()) {
+            if (!match.province || !normalize(match.province).includes(normalize(province))) return false;
+        }
+        if (city && city.trim()) {
+            if (!match.city || !normalize(match.city).includes(normalize(city))) return false;
+        }
+
+        // 2. Player Name Check (Strict)
+        const pA = normalize(match.playerA || match.mateOne || match.user1Name || '');
+        const pB = normalize(match.playerB || match.mateTwo || match.user2Name || '');
         
         if (!pA.includes(targetName) && !pB.includes(targetName)) return false;
 
-        // 2. Game Keywords
+        // 3. Game Keywords (Explicitly checking match.game_name)
         const gameKeys = normalize(gameKeywords).split(/[,，]/).filter(k => k);
         if (gameKeys.length > 0) {
-            const gameName = normalize(match.game_name);
+            const gameName = normalize(match.game_name || '');
             if (!gameKeys.some(k => gameName.includes(k))) return false;
         }
 
-        // 3. Gender Filter
+        // 4. Gender Filter
         if (playerGender) {
             const fullText = normalize(
                 (match.fullName || '') + ' ' + 
@@ -242,14 +253,6 @@ app.get('/api/matches', (req, res) => {
             );
             if (playerGender === 'M' && !fullText.includes('男')) return false;
             if (playerGender === 'F' && !fullText.includes('女')) return false;
-        }
-
-        // 4. Province & City
-        if (province) {
-            if (!match.province || !normalize(match.province).includes(normalize(province))) return false;
-        }
-        if (city) {
-            if (!match.city || !normalize(match.city).includes(normalize(city))) return false;
         }
 
         return true;

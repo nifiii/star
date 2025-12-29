@@ -830,7 +830,7 @@ export const App: React.FC = () => {
                         <Sparkles className="w-6 h-6" />
                       </div>
                       <div>
-                        <h3 className="text-xl font-black text-slate-800">AI 赛区观察</h3>
+                        <h3 className="text-xl font-black text-slate-800">AI 榜单分析</h3>
                         <p className="text-xs text-slate-500 font-bold">基于当前榜单的智能分析</p>
                       </div>
                     </div>

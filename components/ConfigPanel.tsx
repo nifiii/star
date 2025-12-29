@@ -419,7 +419,7 @@ const ConfigPanel: React.FC<Props> = ({
                       value={searchConfig.gameKeywords}
                       onChange={(e) => onSearchConfigChange('gameKeywords', e.target.value)}
                       className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-kid-primary focus:outline-none"
-                      placeholder="例如：少年,小学"
+                      placeholder="例如：公开赛 (搜索比赛名称)"
                     />
                 </div>
             </div>
