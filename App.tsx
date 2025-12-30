@@ -354,6 +354,7 @@ export const App: React.FC = () => {
       return;
     }
 
+    // Rankings cache key already included gameKeywords
     const cacheKey = getCacheKey('rankings', `${searchConfig.province}_${searchConfig.city}_${searchConfig.uKeywords}_${searchConfig.levelKeywords}_${searchConfig.gameKeywords}_${searchConfig.itemKeywords}_${searchConfig.targetPlayerName}`);
     const localCachedData = loadFromCache<PlayerRank[]>(cacheKey);
 
@@ -432,8 +433,8 @@ export const App: React.FC = () => {
     const safePlayerName = targetName as string;
 
     const genderKey = searchConfig.playerGender || 'ALL';
-    // [Updated Cache Key] Include City to prevent wrong location cache hits
-    const cacheKey = getCacheKey('matches', `${safePlayerName}_${searchConfig.province}_${searchConfig.city}_${genderKey}`);
+    // [Updated Cache Key] Added gameKeywords to ensure filters are respected in cache
+    const cacheKey = getCacheKey('matches', `${safePlayerName}_${searchConfig.province}_${searchConfig.city}_${genderKey}_${searchConfig.gameKeywords}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
 
     setStatus(StepStatus.LOADING);
@@ -497,8 +498,8 @@ export const App: React.FC = () => {
     setHasAuthError(false);
     
     const genderKey = searchConfig.playerGender || 'ALL';
-    // [Updated Cache Key] Include City
-    const cacheKey = getCacheKey('matches', `${playerName}_${searchConfig.province}_${searchConfig.city}_${genderKey}`);
+    // [Updated Cache Key] Added gameKeywords
+    const cacheKey = getCacheKey('matches', `${playerName}_${searchConfig.province}_${searchConfig.city}_${genderKey}_${searchConfig.gameKeywords}`);
     const cachedData = loadFromCache<MatchScoreResult[]>(cacheKey);
 
     if (cachedData && cachedData.length > 0) {
@@ -929,6 +930,7 @@ export const App: React.FC = () => {
                       <thead className="text-slate-400 text-xs uppercase bg-white/95 sticky top-0 z-10">
                         <tr>
                           <th className="px-4 py-2 font-bold">时间 / 轮次</th>
+                          <th className="px-4 py-2 font-bold">己方</th>
                           <th className="px-4 py-2 font-bold">对手</th>
                           <th className="px-4 py-2 font-bold text-center">比分</th>
                           <th className="px-4 py-2 font-bold hidden md:table-cell">赛事</th>
@@ -937,7 +939,7 @@ export const App: React.FC = () => {
                       <tbody>
                         {matchHistory.length === 0 && (
                           <tr>
-                              <td colSpan={4} className="p-12 text-center text-slate-400 font-bold">
+                              <td colSpan={5} className="p-12 text-center text-slate-400 font-bold">
                                 {status === StepStatus.LOADING ? "🔍 正在全网搜索..." : "📭 暂无记录"}
                               </td>
                           </tr>
@@ -945,6 +947,7 @@ export const App: React.FC = () => {
                         {matchHistory.map((m, idx) => {
                           const isPlayerA = m.playerA.includes(selectedPlayer || '');
                           const opponent = isPlayerA ? m.playerB : m.playerA;
+                          const selfName = isPlayerA ? m.playerA : m.playerB;
                           
                           // WIN/LOSS Logic
                           let isWin = false;
@@ -973,10 +976,13 @@ export const App: React.FC = () => {
                                 <div className="font-bold text-slate-700">{m.matchTime || '-'}</div>
                                 <div className="text-xs font-medium text-slate-400 bg-white border border-slate-200 px-2 py-0.5 rounded inline-block mt-1">{m.round}</div>
                               </td>
+                              <td className="px-4 py-3 font-bold text-slate-700">
+                                  {selfName}
+                              </td>
                               <td className="px-4 py-3 font-bold text-slate-600">
                                   {opponent}
                                   {/* Mobile: Show game name here if hidden */}
-                                  <div className="md:hidden text-[10px] text-slate-300 mt-1 truncate max-w-[80px]">{m.game_name}</div>
+                                  <div className="md:hidden text-[10px] text-slate-300 mt-1 whitespace-normal">{m.game_name}</div>
                               </td>
                               <td className="px-4 py-3 text-center">
                                 <div className="flex flex-col items-center">
@@ -992,7 +998,7 @@ export const App: React.FC = () => {
                                 </div>
                               </td>
                               <td className="px-4 py-3 rounded-r-xl hidden md:table-cell">
-                                <div className="text-xs font-bold text-kid-primary truncate max-w-[150px]">{m.game_name}</div>
+                                <div className="text-xs font-bold text-kid-primary whitespace-normal">{m.game_name}</div>
                                 <div className="text-[10px] text-slate-400 mt-0.5">{m.fullName || m.groupName}</div>
                               </td>
                             </tr>
