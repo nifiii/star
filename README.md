@@ -83,7 +83,7 @@
 ### 1. 准备环境
 *   Linux 服务器 (Ubuntu/Debian/CentOS) - **需可访问 Google API**
 *   Docker 环境
-*   华体汇账号/密码 (用于后台脚本获取数据)
+*   账号/密码 (用于后台脚本获取数据)
 *   Google Gemini API Key (用于 AI 分析)
 
 ### 2. 获取代码
@@ -105,7 +105,7 @@ docker build \
 ```
 
 ### 4. 运行容器
-启动时注入华体汇凭证，并**挂载数据卷**以保证重启后数据不丢失。
+启动时注入凭证，并**挂载数据卷**以保证重启后数据不丢失。
 
 ```bash
 # 1. 创建本地数据目录（可选，用于方便查看数据）
@@ -132,7 +132,7 @@ docker logs -f my-hth-dashboard | grep "Query:"
 ```
 日志示例: `[25/Feb/2025:10:00:00 +0800] 192.168.1.1 "GET /api/matches" 200 - Query: "playerName=超级丹&gameKeywords=公开赛" - UA: "Mozilla/..."`
 
-**查看后台爬虫日志:**
+**查看后台同步日志:**
 ```bash
 docker logs -f my-hth-dashboard
 ```
