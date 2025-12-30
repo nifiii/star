@@ -4,7 +4,7 @@
 
 这是一个基于 React + Vite 构建的现代化数据仪表盘，专为家长和教练设计。它能够从获取公开的羽毛球赛事数据，生成积分排名，追踪小选手的历史战绩，并利用 **Google Gemini AI** 提供智能的战术分析和建议。
 
-![Dashboard Preview](https://via.placeholder.com/800x450.png?text=Dashboard+Preview)
+![Dashboard Preview](https://wiki.haokuai.uk)
 
 ## ✨ 核心亮点
 
