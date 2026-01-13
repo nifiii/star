@@ -372,7 +372,10 @@ async function fetchMatchesForGame(game) {
                 method: 'POST', headers: getHeaders(currentToken, 'https://apply.ymq.me/'),
                 body: JSON.stringify({ body: { raceId: game.id, page: page, rows: pageSize, keyword: "" }, header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "wx" } })
             });
-            if (!res.ok) break;
+            if (!res.ok) {
+                console.error(`❌ HTTP Error fetching matches [GameID: ${game.id}]: ${res.status} ${res.statusText}`);
+                break;
+            }
             const json = await res.json();
             const rows = json?.detail?.rows || [];
             if (rows.length === 0) { hasMore = false; break; }
@@ -408,7 +411,9 @@ async function fetchMatchesForGame(game) {
             if (rows.length < pageSize || (json.detail.total && allMatches.length >= json.detail.total)) hasMore = false;
             else { page++; await wait(50); }
         }
-    } catch (e) {}
+    } catch (e) {
+        console.error(`❌ 获取比赛比分异常 [GameID: ${game.id} ${game.game_name}]:`, e.message);
+    }
     return allMatches;
 }
 
@@ -443,7 +448,13 @@ async function runDailyUpdate() {
         }
         if (!matchedGameIds.has(game.id)) {
             const matches = await fetchMatchesForGame(game);
-            if (matches.length > 0) { newMatches = newMatches.concat(matches); updatesMade = true; }
+            // Fix: Log warning if match count is 0 for a game that should have matches
+            if (matches.length > 0) { 
+                newMatches = newMatches.concat(matches); 
+                updatesMade = true; 
+            } else {
+                console.warn(`⚠️ Game [${game.game_name}] returned 0 matches.`);
+            }
             await wait(1000);
         }
     }

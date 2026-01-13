@@ -1,11 +1,10 @@
-# 🏸 羽毛球未来之星 - 数据助手 (Data Insight)
+# 🏸 羽毛球未来之星 - 数据助手 (HuaTiHui Data Insight)
 
 **关注青少年成长，用数据记录每一滴汗水。**
 
 这是一个基于 React + Vite 构建的现代化数据仪表盘，专为家长和教练设计。它能够从获取公开的羽毛球赛事数据，生成积分排名，追踪小选手的历史战绩，并利用 **Google Gemini AI** 提供智能的战术分析和建议。
 
-**Demo**
-https://wiki.haokuai.uk
+![Dashboard Preview](https://via.placeholder.com/800x450.png?text=Dashboard+Preview)
 
 ## ✨ 核心亮点
 
@@ -84,13 +83,13 @@ https://wiki.haokuai.uk
 ### 1. 准备环境
 *   Linux 服务器 (Ubuntu/Debian/CentOS) - **需可访问 Google API**
 *   Docker 环境
-*   账号/密码 (用于后台脚本获取数据)
+*   华体汇账号/密码 (用于后台脚本获取数据)
 *   Google Gemini API Key (用于 AI 分析)
 
 ### 2. 获取代码
 ```bash
 git clone <your-repo-url>
-cd star
+cd huatihui-data-insight
 ```
 
 ### 3. 构建镜像
@@ -106,7 +105,7 @@ docker build \
 ```
 
 ### 4. 运行容器
-启动时注入凭证，并**挂载数据卷**以保证重启后数据不丢失。
+启动时注入华体汇凭证，并**挂载数据卷**以保证重启后数据不丢失。
 
 ```bash
 # 1. 创建本地数据目录（可选，用于方便查看数据）
@@ -133,7 +132,7 @@ docker logs -f my-hth-dashboard | grep "Query:"
 ```
 日志示例: `[25/Feb/2025:10:00:00 +0800] 192.168.1.1 "GET /api/matches" 200 - Query: "playerName=超级丹&gameKeywords=公开赛" - UA: "Mozilla/..."`
 
-**查看后台同步日志:**
+**查看后台爬虫日志:**
 ```bash
 docker logs -f my-hth-dashboard
 ```
