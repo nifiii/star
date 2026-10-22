@@ -2,7 +2,7 @@
 
 **关注青少年成长，用数据记录每一滴汗水。**
 
-这是一个基于 React + Vite 构建的现代化数据仪表盘，专为家长和教练设计。它能够从获取公开的羽毛球赛事数据，生成积分排名，追踪小选手的历史战绩，并利用 **Google Gemini AI** 提供智能的战术分析和建议。
+这是一个基于 React + Vite 构建的羽毛球赛事数据查询仪表盘，专为家长和教练设计。它从已授权的数据源获取赛事数据，支持积分排名和运动员历史比分查询。
 
 ![Dashboard Preview](https://via.placeholder.com/800x450.png?text=Dashboard+Preview)
 
@@ -24,16 +24,13 @@
     *   保留 **甲/乙/丙** 传统组别筛选。
 *   **智能匹配**: 后台自动采集并聚合 `itemType`（项目类型）与 `groupName`（组别名），解决部分赛事数据字段缺失导致的筛选遗漏问题。
 
-### 🛡️ 网络优化 (AI Proxy)
-*   **Nginx 反向代理**: 内置 `/google-ai/` 转发规则，将前端的 AI 请求通过服务器中转至 Google。
-*   **无障碍访问**: 即使客户端无法直接连接 Google API (如国内网络环境)，也能正常使用 AI 战术分析功能。
+### 🛡️ 网络优化
+*   **Nginx 反向代理**: 将前端查询请求转发到本地 Express API。
 *   **用户行为审计**: Nginx 自动记录 API 调用日志，方便管理员分析热门搜索关键词。
 
 ### 🧠 功能特性
 *   **🏆 积分排行榜**: 聚合计算指定城市、年龄段的所有近期赛事积分。
 *   **👤 选手生涯档案**: 全网搜索选手的参赛历史，生成胜率分析。支持从本地比分库快速回溯。
-*   **🤖 AI 教练**: 
-    *   **战术报告**: 针对个人历史战绩，评估稳定性并给出训练建议。
 *   **📊 数据导出**: 支持 Excel 格式导出。
 
 ## 💾 数据存储与查询机制 (Data Architecture)
@@ -71,7 +68,7 @@
 
 *   **前端**: React 19, Vite, Tailwind CSS
 *   **后端**: Node.js (Express + Fetch), `node-cron` 调度逻辑
-*   **反向代理**: Nginx (API Proxy + AI Proxy + Access Logging)
+*   **反向代理**: Nginx (API Proxy + Access Logging)
 *   **部署**: Docker (Nginx + Node.js 混合镜像)
 
 ---
@@ -81,10 +78,9 @@
 本项目的 Docker 镜像采用 **All-in-One** 设计：同一个容器内运行 Nginx（提供高性能 Web 服务）和 Node.js 后台进程（负责 Token 保活和数据更新）。
 
 ### 1. 准备环境
-*   Linux 服务器 (Ubuntu/Debian/CentOS) - **需可访问 Google API**
+*   Linux 服务器 (Ubuntu/Debian/CentOS)
 *   Docker 环境
 *   华体汇账号/密码 (用于后台脚本获取数据)
-*   Google Gemini API Key (用于 AI 分析)
 
 ### 2. 获取代码
 ```bash
@@ -97,9 +93,7 @@ cd huatihui-data-insight
 
 ```bash
 docker build \
-  --build-arg API_KEY="your_gemini_api_key_here" \
   --build-arg DOMAIN_NAME="sports.ymq.me" \
-  --build-arg LOG_LEVEL="production" \
   -t hth-dashboard \
   -f Dockerfile.txt .
 ```
@@ -146,9 +140,15 @@ docker exec -it my-hth-dashboard npm run get-token
 
 ## 💻 本地开发
 
+### 2026-10-22 响应式页面
+
+页面改为顶部双入口、通栏筛选与结果。PC 使用表格，手机使用卡片，20 条分页；导出仍包含完整查询结果。比分按选手 A/B 的原始顺序展示，异常比分为“待确认”。查询失败会显示可重试错误。
+
+验证命令：`npm run build`、`npm test`（沿用项目 TypeScript 编译器，支持现有 Node 20 环境）。设计、测试证据与上线/回滚说明见 `docs/responsive-redesign.md`、`docs/responsive-validation.md`。浏览器查询现有 API 不需要上游 token；数据仍由服务端采集任务维护。
+
 1.  **安装依赖**: `npm install`
 2.  **获取 Token**: 运行 `npm run get-token` (这会启动 API Server 和后台脚本)。
-3.  **启动前端**: `npm run dev` (默认 `LOG_LEVEL` 为 `development`)。
+3.  **启动前端**: `npm run dev`。
 
 ## 📄 License
 MIT

@@ -55,22 +55,6 @@ server {
         add_header Cache-Control "public, no-transform";
     }
 
-    # 5. Google Gemini AI Proxy
-    location ^~ /google-ai/ {
-        resolver 127.0.0.11 8.8.8.8 ipv6=off valid=30s;
-        rewrite ^/google-ai/(.*) /$1 break;
-        proxy_pass https://generativelanguage.googleapis.com;
-        proxy_ssl_server_name on;
-        proxy_ssl_name generativelanguage.googleapis.com;
-        proxy_set_header Host generativelanguage.googleapis.com;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_buffering off;
-        proxy_cache off;
-        chunked_transfer_encoding on;
-        proxy_read_timeout 300s;
-    }
-
     error_page 500 502 503 504 /50x.html;
     location = /50x.html {
         root /usr/share/nginx/html;

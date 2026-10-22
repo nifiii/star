@@ -1,62 +1,23 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { ApiHeaderConfig, SearchConfig, StepStatus, UserCredentials } from '../types';
-import { Calendar, Search, ChevronDown, ChevronUp, Trophy, UserSearch, RefreshCw, Trash2, RotateCcw, AlertTriangle, Filter, Tag, XCircle, User, MapPin } from 'lucide-react';
-// removed generateDefaultKeywords import
+import React, { useState } from 'react';
+import { Search, SlidersHorizontal, ChevronDown, RotateCcw, LoaderCircle } from 'lucide-react';
+import type { AppView, SearchConfig } from '../types';
 
 interface Props {
-  config: ApiHeaderConfig;
-  userCredentials: UserCredentials;
+  view: AppView;
   searchConfig: SearchConfig;
-  status: StepStatus;
-  progress: number;
-  onConfigChange: (key: keyof ApiHeaderConfig, value: any) => void;
-  onSearchConfigChange: (key: keyof SearchConfig, value: any) => void;
-  onClearCache: () => void;
-  onScanRankings: () => void;
-  onDirectSearch: () => void;
-  onDemo: () => void;
-  lastCacheTime?: string;
-  hasAuthError?: boolean;
-  onRefreshCredentials?: () => void;
+  loading: boolean;
+  onChange: (key: keyof SearchConfig, value: string | null) => void;
+  onSubmit: () => void;
+  onReset: () => void;
 }
 
-// --- DATA CONSTANTS ---
-
-const GROUP_SECTIONS = [
-  {
-    id: 'u_series',
-    title: 'U系列 (年龄) - [或/OR关系]',
-    options: [
-      { label: 'U7', value: 'U7' },
-      { label: 'U8', value: 'U8' },
-      { label: 'U9', value: 'U9' },
-      { label: 'U10', value: 'U10' },
-      { label: 'U11', value: 'U11' },
-      { label: 'U12', value: 'U12' },
-      { label: 'U13', value: 'U13' },
-      { label: 'U14', value: 'U14' },
-      { label: 'U15', value: 'U15' },
-      { label: 'U16', value: 'U16' },
-    ]
-  },
-  {
-    id: 'level',
-    title: '学段 / 级别 - [且/AND关系]',
-    options: [
-      { label: '儿童', value: '儿童' },
-      { label: '小学', value: '小学' },
-      { label: '少年', value: '少年' },
-      { label: '初中', value: '初中' },
-      { label: '高中', value: '高中' },
-      { label: '公开组', value: '公开' },
-      { label: '甲组', value: '甲' },
-      { label: '乙组', value: '乙' },
-      { label: '丙组', value: '丙' },
-    ]
-  }
-];
-
-const ITEM_OPTIONS = [
+const CITIES = ['广州市', '深圳市', '珠海市', '汕头市', '佛山市', '韶关市', '湛江市', '肇庆市', '江门市', '茂名市', '惠州市', '梅州市', '汕尾市', '河源市', '阳江市', '清远市', '东莞市', '中山市', '潮州市', '揭阳市', '云浮市'];
+const GROUPS = [
+  { field: 'uKeywords', label: '年龄组别 · 可多选', values: ['U7', 'U8', 'U9', 'U10', 'U11', 'U12', 'U13', 'U14', 'U15', 'U16'] },
+  { field: 'levelKeywords', label: '学段 / 级别 · 可多选', values: ['儿童', '小学', '少年', '初中', '高中', '公开', '甲', '乙', '丙'] },
+] as const;
+// Preserve the existing API keyword mapping; matching rules are outside this visual redesign.
+const ITEMS = [
   { label: '男单', value: '男单,男子单打,男子,单打,男A,男B' },
   { label: '女单', value: '女单,女子单打,女子,单打,女A,女B' },
   { label: '男双', value: '男双,男子双打,男子,双打' },
@@ -65,474 +26,54 @@ const ITEM_OPTIONS = [
   { label: '团体', value: '团体' },
 ];
 
-const GUANGDONG_CITIES = [
-  "广州市", "深圳市", "珠海市", "汕头市", "佛山市", 
-  "韶关市", "湛江市", "肇庆市", "江门市", "茂名市", 
-  "惠州市", "梅州市", "汕尾市", "河源市", "阳江市", 
-  "清远市", "东莞市", "中山市", "潮州市", "揭阳市", 
-  "云浮市"
-];
+export default function ConfigPanel({ view, searchConfig: c, loading, onChange, onSubmit, onReset }: Props) {
+  const [advanced, setAdvanced] = useState(false);
+  const [validation, setValidation] = useState('');
+  const isPlayer = view === 'PLAYER_HISTORY';
+  const active = (field: 'uKeywords' | 'levelKeywords' | 'itemKeywords', value: string) => {
+    const parts = (c[field] || '').split(/[,，]/).map(s => s.trim());
+    return value.split(',').every(p => parts.includes(p)) || c[field] === value.split(',')[0];
+  };
+  const toggle = (field: 'uKeywords' | 'levelKeywords' | 'itemKeywords', value: string) => {
+    const parts = new Set((c[field] || '').split(/[,，]/).map(s => s.trim()).filter(Boolean));
+    const selected = active(field, value);
+    value.split(',').forEach(p => selected ? parts.delete(p) : parts.add(p));
+    onChange(field, Array.from(parts).join(','));
+  };
+  const itemLabel = ITEMS.filter(i => active('itemKeywords', i.value)).map(i => i.label).join('、') || c.itemKeywords || '全部项目';
 
-const ConfigPanel: React.FC<Props> = ({ 
-  config, userCredentials, searchConfig, status, progress,
-  onSearchConfigChange, onClearCache,
-  onScanRankings, onDirectSearch, onDemo, lastCacheTime,
-  hasAuthError, onRefreshCredentials
-}) => {
-  
-  const [activeTab, setActiveTab] = useState<'rank' | 'player'>('player');
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  
-  // Dropdown States
-  const [isGroupOpen, setIsGroupOpen] = useState(false);
-  const [isItemOpen, setIsItemOpen] = useState(false);
-  
-  const groupRef = useRef<HTMLDivElement>(null);
-  const itemRef = useRef<HTMLDivElement>(null);
-
-  // Click Outside Handler
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (groupRef.current && !groupRef.current.contains(event.target as Node)) {
-        setIsGroupOpen(false);
+  return <section className="search-panel" aria-label="查询条件">
+    <form onSubmit={e => {
+      e.preventDefault();
+      if (isPlayer && !c.targetPlayerName?.trim()) {
+        setValidation('请输入运动员姓名');
+        document.getElementById('player-name')?.focus();
+        return;
       }
-      if (itemRef.current && !itemRef.current.contains(event.target as Node)) {
-        setIsItemOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-  
-  // Keyword Toggler (Now handles uKeywords vs levelKeywords based on sectionId)
-  const toggleKeyword = (field: 'itemKeywords' | 'uKeywords' | 'levelKeywords', valueString: string) => {
-    const currentStr = searchConfig[field] || '';
-    const currentParts = new Set(currentStr.split(/[,，]/).map(s => s.trim()).filter(s => s));
-    const newValues = valueString.split(/[,，]/).map(s => s.trim());
-    
-    // Determine if we are adding or removing (if all new values exist, we remove)
-    const isAlreadyActive = newValues.every(v => currentParts.has(v));
-
-    if (isAlreadyActive) {
-      newValues.forEach(v => currentParts.delete(v));
-    } else {
-      newValues.forEach(v => currentParts.add(v));
-    }
-    
-    onSearchConfigChange(field, Array.from(currentParts).join(','));
-  };
-
-  const isKeywordActive = (field: 'itemKeywords' | 'uKeywords' | 'levelKeywords', valueString: string) => {
-     const currentStr = searchConfig[field] || '';
-     const currentParts = currentStr.split(/[,，]/).map(s => s.trim().toUpperCase());
-     const targetParts = valueString.split(/[,，]/).map(s => s.trim().toUpperCase());
-     // Considered active if all target parts are present
-     return targetParts.length > 0 && targetParts.every(t => currentParts.includes(t));
-  };
-
-  // Helper to display friendly labels instead of raw keywords
-  const getItemDisplayLabel = () => {
-    const currentStr = searchConfig.itemKeywords || '';
-    if (!currentStr) return '';
-
-    // Find all options that are currently active in the config string
-    const activeLabels = ITEM_OPTIONS.filter(opt => 
-      isKeywordActive('itemKeywords', opt.value)
-    ).map(opt => opt.label);
-
-    if (activeLabels.length > 0) {
-      return activeLabels.join(' + ');
-    }
-
-    // Fallback: if user manually entered something or partial match, show raw string
-    return currentStr;
-  };
-
-  // Toggle Handlers with Mutual Exclusion
-  const toggleGroupDropdown = () => {
-    if (!isGroupOpen) setIsItemOpen(false); // Close other
-    setIsGroupOpen(!isGroupOpen);
-  };
-
-  const toggleItemDropdown = () => {
-    if (!isItemOpen) setIsGroupOpen(false); // Close other
-    setIsItemOpen(!isItemOpen);
-  };
-
-  const getCombinedGroupText = () => {
-    const u = searchConfig.uKeywords;
-    const l = searchConfig.levelKeywords;
-    if (!u && !l) return '';
-    if (u && !l) return u;
-    if (!u && l) return l;
-    return `${u} + ${l}`;
-  };
-
-  const combinedGroupText = getCombinedGroupText();
-  const itemDisplayLabel = getItemDisplayLabel();
-
-  return (
-    // Removed overflow-hidden to allow dropdowns to float over siblings
-    <div className="bg-white rounded-[2rem] shadow-xl border-2 border-slate-100 relative transition-all duration-300">
-      {/* Top Decor */}
-      <div className="h-3 bg-gradient-to-r from-kid-primary via-kid-purple to-kid-accent rounded-t-[2rem]"></div>
-
-      {/* 1. Tabs */}
-      <div className="flex border-b border-slate-100">
-        <button
-          onClick={() => setActiveTab('player')}
-          className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors relative ${
-            activeTab === 'player' ? 'text-kid-orange bg-white first:rounded-tl-[2rem]' : 'text-slate-400 bg-slate-50 hover:bg-slate-100 first:rounded-tl-[2rem]'
-          }`}
-        >
-          <UserSearch className={`w-4 h-4 ${activeTab === 'player' ? 'text-kid-orange' : ''}`} />
-          过往比赛
-          {activeTab === 'player' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-kid-orange mx-8 rounded-t-full"></div>}
-        </button>
-        <button
-          onClick={() => setActiveTab('rank')}
-          className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors relative ${
-            activeTab === 'rank' ? 'text-kid-primary bg-white last:rounded-tr-[2rem]' : 'text-slate-400 bg-slate-50 hover:bg-slate-100 last:rounded-tr-[2rem]'
-          }`}
-        >
-          <Trophy className={`w-4 h-4 ${activeTab === 'rank' ? 'text-kid-yellow' : ''}`} />
-          查排行榜
-          {activeTab === 'rank' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-kid-primary mx-8 rounded-t-full"></div>}
-        </button>
-      </div>
-
-      {/* 2. Content */}
-      <div className="p-5 space-y-5">
-        
-        {/* PART A: Player Search */}
-        {activeTab === 'player' && (
-          <div className="space-y-4 animate-fade-in">
-            <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100">
-               <label className="block text-xs font-bold text-slate-500 mb-2 ml-1 text-center">输入小选手的名字</label>
-               <input
-                  type="text"
-                  value={searchConfig.targetPlayerName || ''}
-                  onChange={(e) => onSearchConfigChange('targetPlayerName', e.target.value)}
-                  className="w-full px-4 py-3 bg-white border-2 border-orange-200 rounded-xl text-lg text-center font-black text-slate-800 focus:outline-none focus:border-kid-orange placeholder:text-slate-300 placeholder:font-normal"
-                  placeholder="例如：超级丹"
-                />
-            </div>
-            
-            {/* Gender Filter */}
-            <div className="flex justify-center gap-3">
-               <button 
-                 onClick={() => onSearchConfigChange('playerGender', searchConfig.playerGender === 'M' ? null : 'M')}
-                 className={`flex-1 py-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
-                    searchConfig.playerGender === 'M' 
-                    ? 'bg-blue-500 border-blue-500 text-white shadow-md shadow-blue-200' 
-                    : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
-                 }`}
-               >
-                 <span className="text-base">👦</span> 男生
-               </button>
-               <button 
-                 onClick={() => onSearchConfigChange('playerGender', searchConfig.playerGender === 'F' ? null : 'F')}
-                 className={`flex-1 py-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
-                    searchConfig.playerGender === 'F' 
-                    ? 'bg-pink-500 border-pink-500 text-white shadow-md shadow-pink-200' 
-                    : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
-                 }`}
-               >
-                 <span className="text-base">👧</span> 女生
-               </button>
-            </div>
+      setValidation('');
+      onSubmit();
+    }}>
+      <fieldset disabled={loading} className="search-fields">
+        <div className="search-grid">
+          <div className="field field-name">
+            <label htmlFor="player-name">运动员姓名 {!isPlayer && <span className="optional">选填</span>}</label>
+            <div className="input-icon"><Search size={17} aria-hidden="true" /><input id="player-name" value={c.targetPlayerName || ''} onChange={e => { onChange('targetPlayerName', e.target.value); setValidation(''); }} placeholder={isPlayer ? '输入姓名，查找比赛记录' : '输入姓名筛选成绩'} autoComplete="off" maxLength={80} aria-invalid={!!validation} aria-describedby={validation ? 'name-error' : undefined} /></div>
+            {validation && <span className="field-error" id="name-error" role="alert">{validation}</span>}
           </div>
-        )}
-
-        {/* PART B: Rankings Search */}
-        {activeTab === 'rank' && (
-          <div className="space-y-5 animate-fade-in relative z-20">
-            {/* 1. Group Filter Dropdown */}
-            <div className={`relative ${isGroupOpen ? 'z-50' : 'z-20'}`} ref={groupRef}>
-               <label className="flex items-center gap-1.5 text-xs font-bold text-slate-500 mb-2 ml-1">
-                 <Filter className="w-3.5 h-3.5 text-kid-primary" /> 组别筛选 
-               </label>
-               
-               <button 
-                 onClick={toggleGroupDropdown}
-                 className={`w-full text-left px-4 py-3 bg-white border rounded-xl text-sm font-medium text-slate-700 shadow-sm flex justify-between items-center transition-all ${isGroupOpen ? 'border-kid-primary ring-2 ring-kid-primary/10' : 'border-slate-200 hover:border-kid-primary/50'}`}
-               >
-                 <span className="truncate pr-4">
-                   {combinedGroupText
-                      ? <span className="text-slate-800 font-bold">{combinedGroupText}</span> 
-                      : <span className="text-slate-400">全部组别 (不限)</span>
-                   }
-                 </span>
-                 <div className="flex items-center gap-2">
-                    {combinedGroupText && (
-                        <div 
-                          onClick={(e) => {
-                             e.stopPropagation();
-                             onSearchConfigChange('uKeywords', '');
-                             onSearchConfigChange('levelKeywords', '');
-                          }}
-                          className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                        >
-                            <XCircle className="w-4 h-4" />
-                        </div>
-                    )}
-                    {isGroupOpen ? <ChevronUp className="w-4 h-4 text-kid-primary" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                 </div>
-               </button>
-
-               {isGroupOpen && (
-                 <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-xl border border-slate-100 p-4 animate-fade-in origin-top ring-1 ring-slate-900/5">
-                    {GROUP_SECTIONS.map((section, idx) => (
-                      <div key={idx} className="mb-4 last:mb-0">
-                         <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1 tracking-wider">{section.title}</h4>
-                         <div className={`grid gap-2 ${section.id === 'u_series' ? 'grid-cols-5' : 'grid-cols-3'}`}>
-                            {section.options.map(opt => {
-                               const targetField = section.id === 'u_series' ? 'uKeywords' : 'levelKeywords';
-                               const isActive = isKeywordActive(targetField, opt.value);
-                               return (
-                                 <button
-                                   key={opt.label}
-                                   onClick={() => toggleKeyword(targetField, opt.value)}
-                                   className={`text-xs py-2 px-1 rounded-lg transition-all active:scale-95 font-medium border ${
-                                     isActive 
-                                       ? 'bg-kid-primary text-white border-kid-primary shadow-md shadow-indigo-100' 
-                                       : 'bg-slate-50 text-slate-600 border-slate-100 hover:border-kid-primary/30 hover:bg-white'
-                                   }`}
-                                 >
-                                   {opt.label}
-                                 </button>
-                               )
-                            })}
-                         </div>
-                      </div>
-                    ))}
-                 </div>
-               )}
-            </div>
-
-            {/* 2. Item Filter Dropdown */}
-            <div className={`relative ${isItemOpen ? 'z-50' : 'z-10'}`} ref={itemRef}>
-               <label className="flex items-center gap-1.5 text-xs font-bold text-slate-500 mb-2 ml-1">
-                 <Tag className="w-3.5 h-3.5 text-kid-secondary" /> 比赛项目 
-               </label>
-               
-               <button 
-                 onClick={toggleItemDropdown}
-                 className={`w-full text-left px-4 py-3 bg-white border rounded-xl text-sm font-medium text-slate-700 shadow-sm flex justify-between items-center transition-all ${isItemOpen ? 'border-kid-secondary ring-2 ring-kid-secondary/10' : 'border-slate-200 hover:border-kid-secondary/50'}`}
-               >
-                 <span className="truncate pr-4">
-                   {itemDisplayLabel
-                      ? <span className="text-slate-800 font-bold">{itemDisplayLabel}</span> 
-                      : <span className="text-slate-400">全部项目 (不限)</span>
-                   }
-                 </span>
-                 <div className="flex items-center gap-2">
-                    {searchConfig.itemKeywords && (
-                        <div 
-                          onClick={(e) => {
-                             e.stopPropagation();
-                             onSearchConfigChange('itemKeywords', '');
-                          }}
-                          className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                        >
-                            <XCircle className="w-4 h-4" />
-                        </div>
-                    )}
-                    {isItemOpen ? <ChevronUp className="w-4 h-4 text-kid-secondary" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                 </div>
-               </button>
-
-               {isItemOpen && (
-                 <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-xl border border-slate-100 p-4 animate-fade-in origin-top ring-1 ring-slate-900/5">
-                    <div className="grid grid-cols-3 gap-2">
-                        {ITEM_OPTIONS.map(item => {
-                          const active = isKeywordActive('itemKeywords', item.value);
-                          return (
-                            <button
-                              key={item.label}
-                              onClick={() => toggleKeyword('itemKeywords', item.value)}
-                              className={`text-xs py-2.5 px-2 rounded-lg border transition-all active:scale-95 font-medium ${
-                                active 
-                                  ? 'bg-kid-secondary text-white border-kid-secondary shadow-md shadow-orange-100' 
-                                  : 'bg-slate-50 text-slate-600 border-slate-100 hover:border-kid-secondary/30 hover:bg-white'
-                              }`}
-                            >
-                              {item.label}
-                            </button>
-                          )
-                        })}
-                    </div>
-                 </div>
-               )}
-            </div>
-
-            {/* 3. Player Name Filter (Now Peer to Group/Item) */}
-            <div className="relative z-0">
-               <label className="flex items-center gap-1.5 text-xs font-bold text-slate-500 mb-2 ml-1">
-                 <User className="w-3.5 h-3.5 text-slate-400" /> 小选手名字 (可选)
-               </label>
-               <input
-                  type="text"
-                  value={searchConfig.targetPlayerName || ''}
-                  onChange={(e) => onSearchConfigChange('targetPlayerName', e.target.value)}
-                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 shadow-sm focus:border-kid-primary focus:outline-none focus:ring-2 focus:ring-kid-primary/10 placeholder:text-slate-300"
-                  placeholder="例如：超级丹"
-                />
-            </div>
-          </div>
-        )}
-
-        {/* PART C: Advanced */}
-        <div className="pt-2 relative z-0">
-          <button 
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-200 group ${
-                showAdvanced 
-                ? 'bg-slate-50 border-slate-200 text-kid-primary shadow-inner' 
-                : 'bg-white border-slate-200 text-slate-600 hover:border-kid-primary/50 hover:shadow-sm hover:text-kid-primary'
-            }`}
-          >
-            <span className="text-xs font-bold flex items-center gap-2">
-                <span className={`p-1.5 rounded-full ${showAdvanced ? 'bg-kid-primary/10' : 'bg-slate-100 group-hover:bg-kid-primary/10'} transition-colors`}>
-                    <MapPin className="w-3.5 h-3.5" />
-                </span>
-                更多筛选 (城市/赛事名)
-            </span>
-            {showAdvanced ? <ChevronUp className="w-4 h-4 text-kid-primary" /> : <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-kid-primary" />}
-          </button>
-          
-          {showAdvanced && (
-            <div className="mt-2 p-3 bg-slate-50/80 rounded-xl border border-slate-100 space-y-3 animate-fade-in text-sm mx-1">
-                <div className="grid grid-cols-2 gap-3">
-                   {/* Province: Fixed to Guangdong */}
-                   <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-1">省份</label>
-                      <input
-                        type="text"
-                        value="广东省"
-                        readOnly
-                        className="w-full px-2 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-xs text-slate-500 cursor-not-allowed"
-                      />
-                   </div>
-                   {/* City: Dropdown */}
-                   <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-1">城市</label>
-                      <select
-                        value={searchConfig.city}
-                        onChange={(e) => onSearchConfigChange('city', e.target.value)}
-                        className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-kid-primary focus:outline-none text-slate-700"
-                      >
-                         <option value="">全部城市 (不限)</option>
-                         {GUANGDONG_CITIES.map(city => (
-                            <option key={city} value={city}>{city}</option>
-                         ))}
-                      </select>
-                   </div>
-                </div>
-                <div>
-                   <label className="block text-[10px] font-bold text-slate-400 mb-1">
-                     赛事关键字 <span className="font-normal text-slate-300">(过滤比赛名称)</span>
-                   </label>
-                   <input
-                      type="text"
-                      value={searchConfig.gameKeywords}
-                      onChange={(e) => onSearchConfigChange('gameKeywords', e.target.value)}
-                      className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-kid-primary focus:outline-none"
-                      placeholder="例如：公开赛 (搜索比赛名称)"
-                    />
-                </div>
-            </div>
-          )}
+          <div className="field"><label htmlFor="city">比赛城市</label><select id="city" value={c.city} onChange={e => onChange('city', e.target.value)}><option value="">广东省 · 全部城市</option>{CITIES.map(city => <option key={city}>{city}</option>)}</select></div>
+          <div className="field field-keyword"><label htmlFor="game-keyword">赛事关键词 <span className="optional">选填</span></label><input id="game-keyword" value={c.gameKeywords} onChange={e => onChange('gameKeywords', e.target.value)} placeholder="如：公开赛、青少年" /></div>
+          <div className="field field-gender"><label htmlFor="gender">性别</label><select id="gender" value={c.playerGender || ''} onChange={e => onChange('playerGender', e.target.value || null)}><option value="">不限</option><option value="M">男子</option><option value="F">女子</option></select></div>
+          <button type="submit" className="button button-primary search-submit">{loading ? <LoaderCircle size={18} className="spin" /> : <Search size={18} />}{loading ? '查询中' : isPlayer ? '查询战绩' : '查询成绩'}</button>
         </div>
-
-        {/* PART D: Action Buttons */}
-        {activeTab === 'player' && (
-             <button
-                onClick={onDirectSearch}
-                disabled={status === StepStatus.LOADING}
-                className="group w-full py-3.5 bg-kid-orange text-white rounded-xl font-bold shadow-lg shadow-orange-200 hover:shadow-orange-300 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:translate-y-0 active:scale-95 flex items-center justify-center gap-2 animate-fade-in relative z-0"
-              >
-                 {status === StepStatus.LOADING ? (
-                   <span className="flex items-center gap-2">
-                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                     寻找中...
-                   </span>
-                ) : (
-                  <>
-                   <UserSearch className="w-5 h-5" /> 搜索历史战绩
-                  </>
-                )}
-              </button>
-        )}
-
-        {activeTab === 'rank' && (
-             <button
-                onClick={onScanRankings}
-                disabled={status === StepStatus.LOADING}
-                className="group w-full py-3.5 bg-kid-primary text-white rounded-xl font-bold shadow-lg shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:translate-y-0 active:scale-95 flex items-center justify-center gap-2 animate-fade-in relative z-0"
-              >
-                {status === StepStatus.LOADING ? (
-                   <span className="flex items-center gap-2">
-                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                     查询中...
-                   </span>
-                ) : (
-                  <>
-                    <Search className="w-5 h-5" /> 搜索排名数据
-                  </>
-                )}
-              </button>
-        )}
-
-        {/* ⚠️ 错误恢复按钮 (仅当有 Auth Error 时显示) */}
-        {hasAuthError && (
-          <div className="animate-fade-in bg-red-50 p-3 rounded-xl border border-red-100 flex flex-col items-center text-center gap-2 relative z-0">
-             <div className="text-xs text-red-600 font-bold flex items-center gap-1">
-               <AlertTriangle className="w-4 h-4" />
-               检测到凭证失效或不存在
-             </div>
-             <button 
-               onClick={onRefreshCredentials}
-               className="w-full py-2 bg-white border border-red-200 text-red-500 rounded-lg text-xs font-bold hover:bg-red-500 hover:text-white transition-colors flex items-center justify-center gap-2 shadow-sm"
-             >
-               <RotateCcw className="w-3 h-3" />
-               刷新凭证
-             </button>
-          </div>
-        )}
-
-        {/* 进度条 (Loading State) */}
-        {status === StepStatus.LOADING && (
-          <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 relative z-0">
-             <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
-                <span>处理进度</span>
-                <span>{progress}%</span>
-             </div>
-             <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-kid-primary to-kid-purple transition-all duration-300"
-                  style={{ width: `${progress}%` }}
-                ></div>
-             </div>
-          </div>
-        )}
-        
-        {/* Cache Status - Moved to bottom */}
-        {lastCacheTime && (
-            <div className="flex items-center justify-between px-2 pt-1 border-t border-slate-50 mt-2 relative z-0">
-               <div className="flex items-center gap-2 text-[10px] text-slate-400">
-                  <RefreshCw className="w-3 h-3" />
-                  <span>缓存时间: {lastCacheTime}</span>
-               </div>
-               <button onClick={onClearCache} className="text-[10px] flex items-center gap-1 text-slate-400 hover:text-red-500 transition-colors" title="清理缓存">
-                 <Trash2 className="w-3 h-3" />
-               </button>
-            </div>
-        )}
-
-      </div>
-    </div>
-  );
-};
-
-export default ConfigPanel;
+        <div className="search-bottom">
+          {isPlayer ? <p>支持姓名包含匹配，双打可输入其中一位运动员的姓名。</p> : <button type="button" className="filter-toggle" aria-expanded={advanced} aria-controls="rank-filters" onClick={() => setAdvanced(!advanced)}><SlidersHorizontal size={15} />组别与项目<span className="filter-summary">{[c.uKeywords, c.levelKeywords, itemLabel].filter(Boolean).join(' · ')}</span><ChevronDown size={15} className={advanced ? 'rotate' : ''} /></button>}
+          <button type="button" className="text-button reset-button" onClick={() => { onReset(); setValidation(''); }}><RotateCcw size={14} />重置筛选</button>
+        </div>
+        {!isPlayer && advanced && <div id="rank-filters" className="advanced-filters">
+          {GROUPS.map(group => <div className="chip-field" key={group.field}><span className="field-label">{group.label}</span><div className="chip-list">{group.values.map(value => <button type="button" key={value} aria-pressed={active(group.field, value)} className={`filter-chip ${active(group.field, value) ? 'active' : ''}`} onClick={() => toggle(group.field, value)}>{value}</button>)}</div></div>)}
+          <div className="chip-field"><span className="field-label">比赛项目 · 可多选</span><div className="chip-list">{ITEMS.map(i => <button type="button" key={i.label} aria-pressed={active('itemKeywords', i.value)} className={`filter-chip ${active('itemKeywords', i.value) ? 'active' : ''}`} onClick={() => toggle('itemKeywords', i.value)}>{i.label}</button>)}<button type="button" className="text-button" onClick={() => { onChange('uKeywords', ''); onChange('levelKeywords', ''); onChange('itemKeywords', ''); }}>清空组别与项目</button></div></div>
+        </div>}
+      </fieldset>
+    </form>
+  </section>;
+}

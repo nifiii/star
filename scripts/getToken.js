@@ -12,7 +12,9 @@ const isDocker = process.env.IS_DOCKER === 'true';
 const PORT = 3000;
 
 // 1. Persistent Storage Directory
-const dataDir = isDocker ? '/app/data' : path.resolve(__dirname, '../data');
+// DATA_DIR allows a controlled one-off incremental sync to use a staging copy
+// of the production files without changing the normal Docker/runtime path.
+const dataDir = process.env.DATA_DIR || (isDocker ? '/app/data' : path.resolve(__dirname, '../data'));
 // 2. Public Web Root
 const publicDir = isDocker ? '/var/www/html' : path.resolve(__dirname, '../public');
 
@@ -278,7 +280,10 @@ async function loginAndSave() {
   };
   try {
       const response = await fetch(loginUrl, { method: 'POST', headers: getHeaders(null), body: JSON.stringify(payload) });
-      if (!response.ok) return false;
+      if (!response.ok) {
+          console.error(`❌ 华体汇登录 HTTP 失败: ${response.status} ${response.statusText}`);
+          return false;
+      }
       const data = await response.json();
       if (data.code === 1 && data.userinfo && data.userinfo.token) {
           currentToken = data.userinfo.token;
@@ -290,8 +295,13 @@ async function loginAndSave() {
           fs.writeFileSync(authPath, JSON.stringify(configData, null, 2));
           return true;
       }
+      console.error(`❌ 华体汇登录业务失败: code=${data?.code ?? 'unknown'}`);
       return false;
-  } catch (error) { return false; }
+  } catch (error) {
+      const reason = error?.cause?.code || error?.code || error?.message || String(error);
+      console.error(`❌ 华体汇登录请求异常: ${reason}`);
+      return false;
+  }
 }
 
 async function fetchGameList() {
@@ -302,6 +312,10 @@ async function fetchGameList() {
             method: 'POST', headers: getHeaders(currentToken),
             body: JSON.stringify({ body: requestBody, header: { token: currentToken, snTime: Date.now(), sn: DATA_QUERY_SN, from: "web" } })
         });
+        if (!res.ok) {
+            console.error(`❌ 获取赛事列表 HTTP 失败: ${res.status} ${res.statusText}`);
+            return null;
+        }
         const json = await res.json();
         if (json && json.data && Array.isArray(json.data.list)) {
              const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
@@ -312,7 +326,11 @@ async function fetchGameList() {
             });
         }
         return [];
-    } catch (e) { return []; }
+    } catch (e) {
+        const reason = e?.cause?.code || e?.code || e?.message || String(e);
+        console.error(`❌ 获取赛事列表请求异常: ${reason}`);
+        return null;
+    }
 }
 
 async function fetchRankingsForGame(game) {
@@ -422,40 +440,105 @@ async function runDailyUpdate() {
     const loginSuccess = await loginAndSave();
     if (!loginSuccess) { console.error("⛔ 登录失败"); return false; }
 
-    const allGames = await fetchGameList();
-    if (allGames.length === 0) return true;
+    const refreshExisting = process.env.REFRESH_EXISTING === 'true';
+    let allGames = await fetchGameList();
+    if (allGames === null) {
+        console.error("⛔ 获取赛事列表失败，本次更新终止并保留旧数据");
+        return false;
+    }
 
     // Use Memory DB as truth, fallback to disk
     let existingRankData = MEMORY_DB.rankings;
     let existingMatchData = MEMORY_DB.matches;
 
+    if (refreshExisting) {
+        // The upstream list is paged. Existing records provide stable race
+        // metadata, so refresh can cover every stored race without deleting
+        // records that are outside the first upstream page.
+        const knownGames = new Map();
+        [...existingRankData, ...existingMatchData].forEach(item => {
+            const raceId = String(item.raceId);
+            if (!knownGames.has(raceId)) {
+                knownGames.set(raceId, {
+                    id: item.raceId,
+                    game_name: item.game_name || '',
+                    province: item.province || '',
+                    city: item.city || ''
+                });
+            }
+        });
+        allGames.forEach(game => {
+            const raceId = String(game.id);
+            if (!knownGames.has(raceId)) knownGames.set(raceId, game);
+        });
+        allGames = [...knownGames.values()];
+        console.log(`🔄 刷新已有赛事: ${allGames.length} 个 raceId`);
+    }
+
+    if (allGames.length === 0) {
+        console.warn("⚠️ 赛事列表为空，本次更新不写盘");
+        return true;
+    }
+
     const rankedGameIds = new Set(existingRankData.map(r => r.raceId));
     const matchedGameIds = new Set(existingMatchData.map(m => m.raceId));
+    const refreshedRankIds = new Set();
+    const refreshedMatchIds = new Set();
 
     let newRankings = [];
     let newMatches = [];
-    let updatesMade = false;
+    let updatesMade = refreshExisting;
 
-    for (let i = 0; i < allGames.length; i++) {
-        const game = allGames[i];
-        if (rankedGameIds.has(game.id) && matchedGameIds.has(game.id)) continue;
-        console.log(`Processing [${i+1}/${allGames.length}]: ${game.game_name}`);
+    const collectGame = async (game, index, parallel = false) => {
+        if (!refreshExisting && rankedGameIds.has(game.id) && matchedGameIds.has(game.id)) return { game, ranks: [], matches: [] };
+        console.log(`Processing [${index + 1}/${allGames.length}]: ${game.game_name}`);
 
-        if (!rankedGameIds.has(game.id)) {
-            const ranks = await fetchRankingsForGame(game);
-            if (ranks.length > 0) { newRankings = newRankings.concat(ranks); updatesMade = true; }
-            await wait(1000);
-        }
-        if (!matchedGameIds.has(game.id)) {
-            const matches = await fetchMatchesForGame(game);
-            // Fix: Log warning if match count is 0 for a game that should have matches
-            if (matches.length > 0) { 
-                newMatches = newMatches.concat(matches); 
-                updatesMade = true; 
-            } else {
-                console.warn(`⚠️ Game [${game.game_name}] returned 0 matches.`);
+        const needRanks = refreshExisting || !rankedGameIds.has(game.id);
+        const needMatches = refreshExisting || !matchedGameIds.has(game.id);
+        let ranks = [];
+        let matches = [];
+        if (parallel) {
+            [ranks, matches] = await Promise.all([
+                needRanks ? fetchRankingsForGame(game) : Promise.resolve([]),
+                needMatches ? fetchMatchesForGame(game) : Promise.resolve([])
+            ]);
+        } else {
+            if (needRanks) {
+                ranks = await fetchRankingsForGame(game);
+                await wait(1000);
             }
-            await wait(1000);
+            if (needMatches) {
+                matches = await fetchMatchesForGame(game);
+                await wait(1000);
+            }
+        }
+        return { game, ranks, matches };
+    };
+
+    const applyResult = ({ game, ranks, matches }) => {
+        if (ranks.length > 0) {
+            newRankings = newRankings.concat(ranks);
+            refreshedRankIds.add(game.id);
+        }
+        if (matches.length > 0) {
+            newMatches = newMatches.concat(matches);
+            refreshedMatchIds.add(game.id);
+        } else if (refreshExisting || matchedGameIds.has(game.id) === false) {
+            console.warn(`⚠️ Game [${game.game_name}] returned 0 matches.`);
+        }
+    };
+
+    if (refreshExisting) {
+        const configuredConcurrency = Number.parseInt(process.env.REFRESH_CONCURRENCY || '4', 10);
+        const concurrency = Number.isFinite(configuredConcurrency) && configuredConcurrency > 0 ? configuredConcurrency : 4;
+        for (let start = 0; start < allGames.length; start += concurrency) {
+            const batch = allGames.slice(start, start + concurrency);
+            const results = await Promise.all(batch.map((game, offset) => collectGame(game, start + offset, true)));
+            results.forEach(applyResult);
+        }
+    } else {
+        for (let i = 0; i < allGames.length; i++) {
+            applyResult(await collectGame(allGames[i], i));
         }
     }
 
@@ -466,13 +549,19 @@ async function runDailyUpdate() {
         console.log("✅ 数据已是最新，仅更新时间戳。");
         // Still verify files exist
     } else {
-        const mergedRankings = [...existingRankData, ...newRankings];
-        const mergedMatches = [...existingMatchData, ...newMatches];
+        const mergedRankings = [
+            ...existingRankData.filter(item => !refreshedRankIds.has(item.raceId)),
+            ...newRankings
+        ];
+        const mergedMatches = [
+            ...existingMatchData.filter(item => !refreshedMatchIds.has(item.raceId)),
+            ...newMatches
+        ];
         console.log(`💾 正在写入磁盘 (${dataDir})...`);
         // Removed root 'city' field as requested
         fs.writeFileSync(rankingsPath, JSON.stringify({ updatedAt: now, dateString: dateStr, count: mergedRankings.length, status: "active", data: mergedRankings }));
         fs.writeFileSync(matchesPath, JSON.stringify({ updatedAt: now, dateString: dateStr, count: mergedMatches.length, status: "active", data: mergedMatches }));
-        console.log(`🎉 更新成功! 新增排名: ${newRankings.length}, 新增比分: ${newMatches.length}`);
+        console.log(`🎉 更新成功! 返回排名: ${newRankings.length}, 返回比分: ${newMatches.length}, 刷新赛事: ${Math.max(refreshedRankIds.size, refreshedMatchIds.size)}`);
     }
     
     // IMPORTANT: Reload Memory after update
@@ -499,6 +588,15 @@ function scheduleNextRun() {
     
     initEnvironment();
     loadDataToMemory();
+
+    // A one-off run is used for controlled incremental syncs. It deliberately
+    // skips the HTTP server and scheduler so the staging process exits after
+    // writing validated data instead of becoming a second long-running worker.
+    if (process.env.RUN_ONCE === 'true') {
+        const success = await runDailyUpdate();
+        process.exitCode = success ? 0 : 1;
+        return;
+    }
 
     // Start API Server
     app.listen(PORT, () => {

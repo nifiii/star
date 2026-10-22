@@ -80,10 +80,4 @@ export enum StepStatus {
   ERROR = 'error'
 }
 
-export interface LogEntry {
-  timestamp: string;
-  message: string;
-  type: 'info' | 'success' | 'error';
-}
-
 export type AppView = 'DASHBOARD_RANKS' | 'PLAYER_HISTORY';

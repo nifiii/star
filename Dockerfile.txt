@@ -31,15 +31,6 @@ RUN npm install
 COPY . .
 
 # 4. 构建 React 应用
-# 接受构建参数 API_KEY
-ARG API_KEY
-ENV API_KEY=$API_KEY
-
-# [新增] 接受日志级别参数 (development | production)
-# 默认为 production，构建时可通过 --build-arg LOG_LEVEL="development" 开启详细日志
-ARG LOG_LEVEL="production"
-ENV LOG_LEVEL=$LOG_LEVEL
-
 RUN npm run build
 
 # 5. 配置 Nginx

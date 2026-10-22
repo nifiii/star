@@ -2,12 +2,14 @@
 export default {
   content: [
     "./index.html",
-    "./**/*.{js,ts,jsx,tsx}",
+    "./*.{js,ts,jsx,tsx}",
+    "./components/**/*.{js,ts,jsx,tsx}",
+    "./services/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Comic Sans MS"', '"Chalkboard SE"', 'sans-serif'],
+        sans: ['Inter', '"Segoe UI"', '"PingFang SC"', '"Microsoft YaHei"', 'sans-serif'],
       },
       colors: {
         kid: {
